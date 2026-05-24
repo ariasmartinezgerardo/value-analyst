@@ -11,6 +11,7 @@ os.environ.pop('HTTPS_PROXY', None)
 os.environ.pop('http_proxy', None)
 os.environ.pop('https_proxy', None)
 
+import requests
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -50,7 +51,15 @@ def fetch_company_data(ticker_symbol: str) -> dict:
     Returns a structured dict with all data needed for analysis.
     """
     try:
-        stock = yf.Ticker(ticker_symbol.upper().strip())
+        session = requests.Session()
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive'
+        })
+        
+        stock = yf.Ticker(ticker_symbol.upper().strip(), session=session)
         info = stock.info or {}
 
         # Guard: check if valid ticker
