@@ -48,11 +48,11 @@ def init_db():
     elif 'role' not in user_columns:
         cursor.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'")
 
-    # Seed default admin user (password: 'admin123') if users table is empty
+    # Seed default admin user (password: 'WarrenBuffett#2026') if users table is empty
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
         import bcrypt
-        pw_hash = bcrypt.hashpw(b"admin123", bcrypt.gensalt(rounds=10)).decode('utf-8')
+        pw_hash = bcrypt.hashpw(b"WarrenBuffett#2026", bcrypt.gensalt(rounds=10)).decode('utf-8')
         cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ("admin", pw_hash, "admin"))
 
     # 2. Check and migrate portfolio table
