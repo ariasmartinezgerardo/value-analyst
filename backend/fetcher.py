@@ -4,6 +4,13 @@ Downloads income statements, balance sheets, cash flows, and market data.
 Provides clean, structured data for the analysis engine.
 """
 
+import os
+# Force direct internet connection (bypass PythonAnywhere free proxy)
+os.environ.pop('HTTP_PROXY', None)
+os.environ.pop('HTTPS_PROXY', None)
+os.environ.pop('http_proxy', None)
+os.environ.pop('https_proxy', None)
+
 import yfinance as yf
 import pandas as pd
 import numpy as np
