@@ -1,5 +1,7 @@
 flask
 flask-cors
-yfinance
 pyjwt
 bcrypt
+requests
+pandas
+numpy

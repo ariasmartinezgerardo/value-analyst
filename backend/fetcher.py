@@ -1,325 +1,127 @@
 """
-fetcher.py — Financial data fetching module via yfinance.
+fetcher.py — Financial data fetching module via Financial Modeling Prep (FMP).
 Downloads income statements, balance sheets, cash flows, and market data.
 Provides clean, structured data for the analysis engine.
 """
 
 import os
-# Force direct internet connection (bypass PythonAnywhere free proxy)
-os.environ.pop('HTTP_PROXY', None)
-os.environ.pop('HTTPS_PROXY', None)
-os.environ.pop('http_proxy', None)
-os.environ.pop('https_proxy', None)
-
 import requests
-import yfinance as yf
-import pandas as pd
-import numpy as np
-from datetime import datetime
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+API_KEY = "YbtdwIo6Ih89vcUO9Cq0TeAY4KlHRvOo"
+BASE_URL = "https://financialmodelingprep.com/api/v3"
 
-def _safe_get(df, key, col_idx=0, default=None):
-    """Safely extract a value from a DataFrame by row label and column index."""
-    try:
-        if key in df.index:
-            val = df.loc[key].iloc[col_idx]
-            if pd.isna(val):
-                return default
-            return float(val)
-    except (IndexError, KeyError, TypeError):
-        pass
-    return default
-
-
-def _safe_get_all(df, key, default=None):
-    """Get all values for a row label across all columns."""
-    try:
-        if key in df.index:
-            vals = df.loc[key].values.tolist()
-            return [float(v) if not pd.isna(v) else default for v in vals]
-    except (KeyError, TypeError):
-        pass
-    return []
-
+def _safe_float(val, default=None):
+    if val is None: return default
+    try: return float(val)
+    except: return default
 
 def fetch_company_data(ticker_symbol: str) -> dict:
-    """
-    Fetch comprehensive financial data for a company.
-    Returns a structured dict with all data needed for analysis.
-    """
+    ticker = ticker_symbol.upper().strip()
     try:
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive'
-        })
+        # 1. Profile (Company Name, Sector, Industry, Price, Market Cap)
+        prof_resp = requests.get(f"{BASE_URL}/profile/{ticker}?apikey={API_KEY}", timeout=10)
+        prof_data = prof_resp.json()
+        if not prof_data or not isinstance(prof_data, list):
+            return {'error': f'Ticker "{ticker}" not found or no data available.'}
+        profile = prof_data[0]
         
-        stock = yf.Ticker(ticker_symbol.upper().strip(), session=session)
-        info = stock.info or {}
-
-        # Guard: check if valid ticker
-        if not info.get('shortName') and not info.get('longName'):
-            return {'error': f'Ticker "{ticker_symbol}" not found or no data available.'}
-
-        # ─── Financial Statements (Annual) ──────────────────────
-        try:
-            income_stmt = stock.income_stmt
-            if income_stmt is None or income_stmt.empty:
-                income_stmt = pd.DataFrame()
-        except Exception:
-            income_stmt = pd.DataFrame()
-
-        try:
-            balance_sheet = stock.balance_sheet
-            if balance_sheet is None or balance_sheet.empty:
-                balance_sheet = pd.DataFrame()
-        except Exception:
-            balance_sheet = pd.DataFrame()
-
-        try:
-            cash_flow = stock.cashflow
-            if cash_flow is None or cash_flow.empty:
-                cash_flow = pd.DataFrame()
-        except Exception:
-            cash_flow = pd.DataFrame()
-
-        # ─── Quarterly Statements (for TTM) ─────────────────────
-        try:
-            q_income = stock.quarterly_income_stmt
-            if q_income is None: q_income = pd.DataFrame()
-        except Exception:
-            q_income = pd.DataFrame()
-        try:
-            q_cash_flow = stock.quarterly_cashflow
-            if q_cash_flow is None: q_cash_flow = pd.DataFrame()
-        except Exception:
-            q_cash_flow = pd.DataFrame()
-
-        # ─── Basic Info ──────────────────────────────────────────
-        company_name = info.get('longName') or info.get('shortName', ticker_symbol)
-        sector = info.get('sector', 'N/A')
-        industry = info.get('industry', 'N/A')
-        currency = info.get('currency', 'USD')
-        market_cap = info.get('marketCap', 0)
-        shares_outstanding = info.get('sharesOutstanding', 0)
-        current_price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
-        enterprise_value = info.get('enterpriseValue', 0)
-
-        # ─── EPS ─────────────────────────────────────────────────
-        # Historical EPS from income statement
-        eps_values = []
-        eps_keys = ['Basic EPS', 'BasicEPS', 'Diluted EPS', 'DilutedEPS']
-        for key in eps_keys:
-            vals = _safe_get_all(income_stmt, key)
-            if vals:
-                eps_values = vals
-                break
-
-        eps_ttm = info.get('trailingEps', None)
-        if eps_ttm is None and eps_values:
-            eps_ttm = eps_values[0] if eps_values else None
-
-        # ─── EBITDA ──────────────────────────────────────────────
-        ebitda_values = _safe_get_all(income_stmt, 'EBITDA')
-        if not ebitda_values:
-            ebitda_values = _safe_get_all(income_stmt, 'Normalized EBITDA')
-        if not ebitda_values:
-            # Calculate: Operating Income + Depreciation & Amortization
-            op_income = _safe_get_all(income_stmt, 'Operating Income')
-            if not op_income:
-                op_income = _safe_get_all(income_stmt, 'OperatingIncome')
-            da_cf = _safe_get_all(cash_flow, 'Depreciation And Amortization')
-            if not da_cf:
-                da_cf = _safe_get_all(cash_flow, 'DepreciationAndAmortization')
-            if not da_cf:
-                da_cf = _safe_get_all(cash_flow, 'Depreciation Amortization Depletion')
-            if op_income and da_cf:
-                min_len = min(len(op_income), len(da_cf))
-                ebitda_values = [
-                    (op_income[i] or 0) + abs(da_cf[i] or 0)
-                    for i in range(min_len)
-                ]
-
-        ebitda_ttm = info.get('ebitda', ebitda_values[0] if ebitda_values else None)
-
-        # ─── CAPEX ───────────────────────────────────────────────
-        capex_keys = ['Capital Expenditure', 'CapitalExpenditure', 'Purchase Of PPE']
-        capex_values = []
-        for key in capex_keys:
-            capex_values = _safe_get_all(cash_flow, key)
-            if capex_values:
-                break
-        # CAPEX is typically negative in cash flow statements
-        capex_values = [abs(v) if v else 0 for v in capex_values]
-
-        # ─── Interest Expense ────────────────────────────────────
-        interest_keys = ['Interest Expense', 'InterestExpense', 'Interest Expense Non Operating']
-        interest_values = []
-        for key in interest_keys:
-            interest_values = _safe_get_all(income_stmt, key)
-            if interest_values:
-                break
-        interest_values = [abs(v) if v else 0 for v in interest_values]
-
-        # ─── Tax Provision ───────────────────────────────────────
-        tax_keys = ['Tax Provision', 'TaxProvision', 'IncomeTaxExpense']
-        tax_values = []
-        for key in tax_keys:
-            tax_values = _safe_get_all(income_stmt, key)
-            if tax_values:
-                break
-        tax_values = [abs(v) if v else 0 for v in tax_values]
-
-        # ─── Working Capital Change ──────────────────────────────
-        wc_keys = ['Change In Working Capital', 'ChangeInWorkingCapital',
-                    'Changes In Account Receivables', 'ChangesInAccountReceivables']
-        wc_values = []
-        for key in wc_keys:
-            wc_values = _safe_get_all(cash_flow, key)
-            if wc_values:
-                break
-
-        # ─── Operating Income (for ROIC) ─────────────────────────
-        ebit_keys = ['EBIT', 'Operating Income', 'OperatingIncome']
-        ebit_values = []
-        for key in ebit_keys:
-            ebit_values = _safe_get_all(income_stmt, key)
-            if ebit_values:
-                break
-
-        # ─── Pretax Income (for tax rate) ────────────────────────
-        pretax_keys = ['Pretax Income', 'PretaxIncome']
-        pretax_values = []
-        for key in pretax_keys:
-            pretax_values = _safe_get_all(income_stmt, key)
-            if pretax_values:
-                break
-
-        # ─── Balance Sheet items (for ROIC) ──────────────────────
-        equity_keys = ['Stockholders Equity', 'StockholdersEquity', 'Common Stock Equity', 'Total Equity Gross Minority Interest']
-        equity_values = []
-        for key in equity_keys:
-            equity_values = _safe_get_all(balance_sheet, key)
-            if equity_values:
-                break
-
-        total_debt_keys = ['Total Debt', 'TotalDebt']
-        total_debt_values = []
-        for key in total_debt_keys:
-            total_debt_values = _safe_get_all(balance_sheet, key)
-            if total_debt_values:
-                break
-
-        cash_keys = ['Cash And Cash Equivalents', 'CashAndCashEquivalents',
-                     'Cash Cash Equivalents And Short Term Investments']
-        cash_values = []
-        for key in cash_keys:
-            cash_values = _safe_get_all(balance_sheet, key)
-            if cash_values:
-                break
-
-        # ─── FCF from Yahoo (for comparison / Non-GAAP check) ───
-        fcf_yahoo_keys = ['Free Cash Flow', 'FreeCashFlow']
-        fcf_yahoo_values = []
-        for key in fcf_yahoo_keys:
-            fcf_yahoo_values = _safe_get_all(cash_flow, key)
-            if fcf_yahoo_values:
-                break
-
-        # ─── Revenue (for growth estimation) ─────────────────────
-        revenue_keys = ['Total Revenue', 'TotalRevenue', 'Operating Revenue']
-        revenue_values = []
-        for key in revenue_keys:
-            revenue_values = _safe_get_all(income_stmt, key)
-            if revenue_values:
-                break
-
-        # ─── Depreciation & Amortization ─────────────────────────
-        da_keys = ['Depreciation And Amortization', 'DepreciationAndAmortization', 'Depreciation Amortization Depletion', 'Reconciled Depreciation']
-        da_values = []
-        for key in da_keys:
-            da_values = _safe_get_all(cash_flow, key)
-            if da_values:
-                break
-        if not da_values:
-            # Try from income statement
-            da_values = _safe_get_all(income_stmt, 'Reconciled Depreciation')
-        da_values = [abs(v) if v else 0 for v in da_values]
-
-        # ─── Dates for historical columns ────────────────────────
-        fiscal_dates = []
-        if not income_stmt.empty:
-            fiscal_dates = [str(col.date()) if hasattr(col, 'date') else str(col) for col in income_stmt.columns]
-
-        # Fetch 5-year price history for historical multiples
+        # 2. Quote (Shares Outstanding, EPS, PE)
+        quote_resp = requests.get(f"{BASE_URL}/quote/{ticker}?apikey={API_KEY}", timeout=10)
+        quote_data = quote_resp.json()
+        quote = quote_data[0] if quote_data else {}
+        
+        # 3. Key Metrics TTM (Enterprise Value, Dividend Yield, Payout Ratio)
+        km_resp = requests.get(f"{BASE_URL}/key-metrics-ttm/{ticker}?apikey={API_KEY}", timeout=10)
+        km_data = km_resp.json()
+        km = km_data[0] if km_data else {}
+        
+        # 4. Income Statement (EPS history, EBITDA, Revenue, Net Income, etc.)
+        inc_resp = requests.get(f"{BASE_URL}/income-statement/{ticker}?period=annual&limit=5&apikey={API_KEY}", timeout=10)
+        inc_data = inc_resp.json() if inc_resp.status_code == 200 else []
+        
+        # 5. Balance Sheet (Equity, Debt, Cash)
+        bal_resp = requests.get(f"{BASE_URL}/balance-sheet-statement/{ticker}?period=annual&limit=5&apikey={API_KEY}", timeout=10)
+        bal_data = bal_resp.json() if bal_resp.status_code == 200 else []
+        
+        # 6. Cash Flow Statement (CAPEX, Free Cash Flow, D&A)
+        cf_resp = requests.get(f"{BASE_URL}/cash-flow-statement/{ticker}?period=annual&limit=5&apikey={API_KEY}", timeout=10)
+        cf_data = cf_resp.json() if cf_resp.status_code == 200 else []
+        
+        # --- Extract Basic Info ---
+        company_name = profile.get('companyName', ticker)
+        sector = profile.get('sector', 'N/A')
+        industry = profile.get('industry', 'N/A')
+        currency = profile.get('currency', 'USD')
+        current_price = _safe_float(profile.get('price')) or _safe_float(quote.get('price'), 0)
+        market_cap = _safe_float(profile.get('mktCap', 0))
+        shares_outstanding = _safe_float(quote.get('sharesOutstanding', 0))
+        enterprise_value = _safe_float(km.get('enterpriseValueTTM', 0))
+        
+        # --- Extract Dates ---
+        # FMP returns data with the newest date first
+        fiscal_dates = [item.get('date', '')[:10] for item in inc_data]
+        
+        # --- Extract Arrays (Most recent first) ---
+        eps_values = [_safe_float(item.get('eps')) for item in inc_data]
+        ebitda_values = [_safe_float(item.get('ebitda')) for item in inc_data]
+        interest_values = [abs(_safe_float(item.get('interestExpense'), 0)) for item in inc_data]
+        tax_values = [abs(_safe_float(item.get('incomeTaxExpense'), 0)) for item in inc_data]
+        ebit_values = [_safe_float(item.get('operatingIncome')) for item in inc_data]
+        pretax_values = [_safe_float(item.get('incomeBeforeTax')) for item in inc_data]
+        revenue_values = [_safe_float(item.get('revenue')) for item in inc_data]
+        net_income_values = [_safe_float(item.get('netIncome')) for item in inc_data]
+        
+        equity_values = [_safe_float(item.get('totalEquity')) for item in bal_data]
+        total_debt_values = [_safe_float(item.get('totalDebt')) for item in bal_data]
+        cash_values = [_safe_float(item.get('cashAndCashEquivalents')) for item in bal_data]
+        shares_history = [_safe_float(item.get('commonStock')) for item in bal_data]
+        
+        capex_values = [abs(_safe_float(item.get('capitalExpenditure'), 0)) for item in cf_data]
+        wc_values = [_safe_float(item.get('changeInWorkingCapital')) for item in cf_data]
+        da_values = [abs(_safe_float(item.get('depreciationAndAmortization'), 0)) for item in cf_data]
+        fcf_values = [_safe_float(item.get('freeCashFlow')) for item in cf_data]
+        
+        # --- TTM and Ratios ---
+        eps_ttm = _safe_float(quote.get('eps'))
+        ebitda_ttm = ebitda_values[0] if ebitda_values else None
+        
+        per_trailing = _safe_float(km.get('peRatioTTM')) or _safe_float(quote.get('pe'))
+        per_forward = None  # Free tier limitation
+        
+        div_yield_pct = _safe_float(km.get('dividendYieldPercentageTTM'), 0)
+        dividend_yield = div_yield_pct / 100.0 if div_yield_pct else 0
+        payout_ratio = _safe_float(km.get('payoutRatioTTM'), 0)
+        
+        # --- 7. Historical Prices (for 5-year multiples) ---
         historical_prices = []
         try:
-            hist = stock.history(period="5y")
-            if not hist.empty and fiscal_dates:
-                # Strip timezone to avoid comparison errors with timezone-naive fiscal_dates
-                if hist.index.tz is not None:
-                    hist.index = hist.index.tz_localize(None)
+            if fiscal_dates:
+                hist_resp = requests.get(f"{BASE_URL}/historical-price-full/{ticker}?timeseries=1260&apikey={API_KEY}", timeout=10)
+                hist_data = hist_resp.json().get('historical', [])
+                # Create dictionary of Date -> Close Price
+                hist_dict = {item['date']: item['close'] for item in hist_data}
+                
+                # For each fiscal date, find the exact or closest previous trading day price
                 for f_date in fiscal_dates:
-                    try:
-                        target_dt = pd.to_datetime(f_date)
-                        # Find closest available trading day's closing price
-                        idx = hist.index.get_indexer([target_dt], method='nearest')[0]
-                        if idx != -1:
-                            close_price = float(hist.iloc[idx]['Close'])
-                            historical_prices.append(close_price)
-                        else:
-                            historical_prices.append(None)
-                    except Exception:
+                    found = False
+                    for offset in range(10): # search up to 10 days backwards to account for weekends/holidays
+                        target = (datetime.strptime(f_date, "%Y-%m-%d") - timedelta(days=offset)).strftime("%Y-%m-%d") if offset > 0 else f_date
+                        if target in hist_dict:
+                            historical_prices.append(hist_dict[target])
+                            found = True
+                            break
+                    if not found:
                         historical_prices.append(None)
-            else:
-                historical_prices = [None] * len(fiscal_dates)
         except Exception as e:
-            logger.warning(f"Error fetching historical prices for {ticker_symbol}: {e}")
+            logger.warning(f"Error fetching historical prices for {ticker}: {e}")
             historical_prices = [None] * len(fiscal_dates)
-
-        # ─── Net Income (for additional checks) ─────────────────
-        net_income_keys = ['Net Income', 'NetIncome', 'Net Income Common Stockholders']
-        net_income_values = []
-        for key in net_income_keys:
-            net_income_values = _safe_get_all(income_stmt, key)
-            if net_income_values:
-                break
-
-        # ─── Analyst Growth Estimate ─────────────────────────────
-        growth_estimate = info.get('earningsGrowth') or info.get('revenueGrowth')
-        analyst_target = info.get('targetMeanPrice')
-
-        # ─── Trailing PER ────────────────────────────────────────
-        per_trailing = info.get('trailingPE')
-        per_forward = info.get('forwardPE')
-
-        # ─── Dividend Info ───────────────────────────────────────
-        dividend_yield = info.get('dividendYield', 0)
-        payout_ratio = info.get('payoutRatio', 0)
-
-        # ─── Qualitative & Governance Info ──────────────────────
-        held_percent_insiders = info.get('heldPercentInsiders')
-        audit_risk = info.get('auditRisk')
-        board_risk = info.get('boardRisk')
-        compensation_risk = info.get('compensationRisk')
-        business_summary = info.get('longBusinessSummary', '')
-
-        # Historical shares outstanding to detect buybacks
-        shares_history = []
-        shares_keys = ['Ordinary Shares Number', 'Common Stock Shares Outstanding', 'Share Capital']
-        for key in shares_keys:
-            shares_history = _safe_get_all(balance_sheet, key)
-            if shares_history:
-                break
-
-        # ─── Build result ────────────────────────────────────────
-        result = {
-            'ticker': ticker_symbol.upper().strip(),
+            
+        return {
+            'ticker': ticker,
             'empresa': company_name,
             'sector': sector,
             'industry': industry,
@@ -330,8 +132,6 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'enterprise_value': enterprise_value,
             'fiscal_dates': fiscal_dates,
             'historical_prices': historical_prices,
-
-            # Core metrics arrays (most recent first)
             'eps_values': eps_values,
             'eps_ttm': eps_ttm,
             'ebitda_values': ebitda_values,
@@ -341,69 +141,63 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'tax_values': tax_values,
             'wc_values': wc_values,
             'da_values': da_values,
-
-            # ROIC components
             'ebit_values': ebit_values,
             'pretax_values': pretax_values,
             'equity_values': equity_values,
             'total_debt_values': total_debt_values,
             'cash_values': cash_values,
-
-            # Additional
-            'fcf_yahoo_values': fcf_yahoo_values,
+            'fcf_yahoo_values': fcf_values, # Reuse key to maintain compatibility
             'revenue_values': revenue_values,
             'net_income_values': net_income_values,
-
-            # Ratios & Estimates
             'per_trailing': per_trailing,
             'per_forward': per_forward,
-            'growth_estimate': growth_estimate,
-            'analyst_target': analyst_target,
+            'growth_estimate': None,
+            'analyst_target': None,
             'dividend_yield': dividend_yield,
             'payout_ratio': payout_ratio,
-
-            # Qualitative
-            'held_percent_insiders': held_percent_insiders,
-            'audit_risk': audit_risk,
-            'board_risk': board_risk,
-            'compensation_risk': compensation_risk,
-            'business_summary': business_summary,
+            'held_percent_insiders': None,
+            'audit_risk': None,
+            'board_risk': None,
+            'compensation_risk': None,
+            'business_summary': profile.get('description', ''),
             'shares_history': shares_history,
-
             'fetched_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
             'error': None
         }
 
-        return result
-
     except Exception as e:
-        logger.exception(f"Error fetching data for {ticker_symbol}")
+        logger.exception(f"Error fetching data for {ticker}")
         return {
-            'ticker': ticker_symbol.upper().strip(),
+            'ticker': ticker,
             'error': str(e)
         }
-
 
 def fetch_quick_info(ticker_symbol: str) -> dict:
     """Fetch minimal info for portfolio cards (fast)."""
+    ticker = ticker_symbol.upper().strip()
     try:
-        stock = yf.Ticker(ticker_symbol.upper().strip())
-        info = stock.info or {}
+        prof_resp = requests.get(f"{BASE_URL}/profile/{ticker}?apikey={API_KEY}", timeout=10)
+        prof_data = prof_resp.json()
+        if not prof_data or not isinstance(prof_data, list):
+            return {'ticker': ticker, 'error': 'Not found'}
+            
+        quote_resp = requests.get(f"{BASE_URL}/quote/{ticker}?apikey={API_KEY}", timeout=10)
+        quote_data = quote_resp.json()
+        
+        profile = prof_data[0]
+        quote = quote_data[0] if quote_data else {}
+        
         return {
-            'ticker': ticker_symbol.upper().strip(),
-            'empresa': info.get('longName') or info.get('shortName', ticker_symbol),
-            'current_price': info.get('currentPrice') or info.get('regularMarketPrice', 0),
-            'sector': info.get('sector', 'N/A'),
-            'market_cap': info.get('marketCap', 0),
-            'per_trailing': info.get('trailingPE'),
+            'ticker': ticker,
+            'empresa': profile.get('companyName', ticker),
+            'current_price': _safe_float(profile.get('price')) or _safe_float(quote.get('price'), 0),
+            'sector': profile.get('sector', 'N/A'),
+            'market_cap': _safe_float(profile.get('mktCap', 0)),
+            'per_trailing': _safe_float(quote.get('pe')),
             'error': None
         }
     except Exception as e:
-        return {
-            'ticker': ticker_symbol.upper().strip(),
-            'error': str(e)
-        }
-
+        return {'ticker': ticker, 'error': str(e)}
 
 def get_sp500_tickers() -> list:
     """Return a curated list of well-known S&P 500 tickers for the scanner."""
