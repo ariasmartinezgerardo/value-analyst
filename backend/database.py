@@ -53,7 +53,7 @@ def init_db():
     if cursor.fetchone()[0] == 0:
         import bcrypt
         pw_hash = bcrypt.hashpw(b"WarrenBuffett#2026", bcrypt.gensalt(rounds=10)).decode('utf-8')
-        cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ("admin", pw_hash, "admin"))
+        cursor.execute("INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)", ("garias", pw_hash, "admin"))
 
     # 2. Check and migrate portfolio table
     cursor.execute("PRAGMA table_info(portfolio)")
