@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="Value Analyst — Analista fundamental de bolsa. Inversión en valor con FCF Real, ROIC, Graham y DCF.">
+  <meta name="theme-color" content="#0a0e17">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Value Analyst">
+  
+  <title>Value Analyst — Analista Fundamental de Bolsa</title>
+  
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  
+  <!-- ═══ Top Navigation ═══ -->
+  <nav class="top-nav">
+    <div class="top-nav__logo">
+      <span class="top-nav__logo-icon">📊</span>
+      <span class="top-nav__logo-text">VALUE ANALYST</span>
+    </div>
+    <div class="top-nav__actions">
+      <button class="top-nav__btn" onclick="openSidebar()" title="Configuración">⚙️</button>
+    </div>
+  </nav>
+
+  <!-- ═══ App Container ═══ -->
+  <div id="app">
+
+    <!-- ─── Page: Auth (Login/Register) ─────────────────────── -->
+    <div id="page-auth" class="page active">
+      <div class="auth-container" style="max-width: 400px; margin: 0 auto; padding-top: 15vh;">
+        <h1 class="page__title" style="text-align: center; margin-bottom: 0.5rem;">Bienvenido</h1>
+        <p class="page__subtitle" style="text-align: center; margin-bottom: 2rem;">Inicia sesión para acceder a tu cartera</p>
+        
+        <form id="auth-form" class="auth-form" onsubmit="handleAuth(event)">
+          <div class="input-group">
+            <input type="text" id="auth-username" class="modal__input" placeholder="Usuario" required autocomplete="username">
+          </div>
+          <div class="input-group" style="margin-top: 1rem;">
+            <input type="password" id="auth-password" class="modal__input" placeholder="Contraseña" required autocomplete="current-password">
+          </div>
+          <button type="submit" id="auth-submit-btn" class="btn-primary" style="width: 100%; margin-top: 2rem; padding: 14px;">Iniciar Sesión</button>
+        </form>
+        
+        <div style="text-align: center; margin-top: 1.5rem;">
+          <button type="button" id="auth-toggle-btn" class="btn-text" onclick="toggleAuthMode()" style="background: none; border: none; color: var(--accent-primary); font-size: 0.9rem; cursor: pointer; text-decoration: underline;">
+            ¿No tienes cuenta? Regístrate aquí
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Page: Dashboard ─────────────────────────────────── -->
+    <div id="page-dashboard" class="page">
+      <h1 class="page__title">Mi Cartera</h1>
+      <p class="page__subtitle">Análisis fundamental · Inversión en Valor</p>
+      
+      <button id="btn-update" class="btn-update btn-update--pulse" onclick="executeUpdate()">
+        ⚡ EJECUTAR UPDATE
+      </button>
+
+      <div id="portfolio-list">
+        <!-- Dynamic content -->
+      </div>
+
+      <button class="btn-add" onclick="openAddModal()">
+        <span>+</span> Añadir Ticker
+      </button>
+    </div>
+
+    <!-- ─── Page: Detail ────────────────────────────────────── -->
+    <div id="page-detail" class="page">
+      <div id="detail-content">
+        <!-- Dynamic content -->
+      </div>
+    </div>
+
+    <!-- ─── Page: Explorer ──────────────────────────────────── -->
+    <div id="page-explore" class="page">
+      <h1 class="page__title">🔍 Explorador de Valor</h1>
+      <p class="page__subtitle">Escanea el mercado en busca de empresas infravaloradas de alta calidad</p>
+      
+      <div class="explorer-search">
+        <button id="btn-explore" class="btn-explore" onclick="exploreOpportunities()">
+          🔎 Buscar Oportunidades
+        </button>
+        
+        <div class="explorer-filters">
+          <span class="filter-chip">PER &lt; 20</span>
+          <span class="filter-chip">ROIC &gt; 12%</span>
+          <span class="filter-chip">FCF Yield &gt; 5%</span>
+          <span class="filter-chip">MoS &gt; 20%</span>
+        </div>
+      </div>
+
+      <div id="explorer-results">
+        <div class="empty-state">
+          <div class="empty-state__icon">🔎</div>
+          <div class="empty-state__title">Descubre oportunidades</div>
+          <div class="empty-state__text">Pulsa "Buscar Oportunidades" para escanear ~50 empresas del S&P 500 con criterios de inversión en valor.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─── Page: Settings (placeholder for bottom nav) ─────── -->
+    <div id="page-settings" class="page">
+      <h1 class="page__title">⚙️ Configuración</h1>
+      <p class="page__subtitle">Parámetros y exportación de datos</p>
+      
+      <div class="card">
+        <div class="info-row">
+          <span class="info-row__label">WACC (Tasa de descuento)</span>
+          <span class="info-row__value">10.0%</span>
+        </div>
+        <div class="info-row">
+          <span class="info-row__label">Crecimiento Terminal</span>
+          <span class="info-row__value">2.5%</span>
+        </div>
+        <div class="info-row">
+          <span class="info-row__label">Rendimiento Bono AAA</span>
+          <span class="info-row__value">4.5%</span>
+        </div>
+        <div class="info-row">
+          <span class="info-row__label">MoS Mínimo Recomendación</span>
+          <span class="info-row__value">20%</span>
+        </div>
+      </div>
+
+      <div style="margin-top: var(--space-lg);">
+        <div class="card" style="display: flex; justify-content: space-between; align-items: center; border: 1px solid var(--border-subtle);">
+          <div>
+            <div style="font-size: 0.75rem; color: var(--text-tertiary); text-transform: uppercase; font-weight: 700; margin-bottom: 4px;">Sesión Actual</div>
+            <div style="font-size: 1.1rem; font-weight: 600; color: var(--text-primary);">
+              👤 <span class="current-username-display">Usuario</span>
+            </div>
+            <div class="current-role-display" style="font-size: 0.75rem; color: var(--accent-primary); margin-top: 4px; font-weight: 600;"></div>
+          </div>
+          <button class="btn-text" onclick="logout()" style="color: var(--color-danger); padding: 8px;">
+            🚪 Salir
+          </button>
+        </div>
+      </div>
+
+      <div style="margin-top: var(--space-lg);">
+        <p style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: var(--space-sm);">
+          Motor Analítico
+        </p>
+        <div class="card" style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.7;">
+          <strong style="color: var(--accent-primary);">FCF Real =</strong> EBITDA − CAPEX − Intereses − Impuestos − ΔWC<br>
+          <strong style="color: var(--accent-primary);">ROIC =</strong> NOPAT / Invested Capital<br>
+          <strong style="color: var(--accent-primary);">Graham =</strong> EPS × (8.5 + 2g) × 4.4 / Y<br>
+          <strong style="color: var(--accent-primary);">DCF =</strong> NPV(FCF proyectados 10a + Terminal Value)<br>
+          <br>
+          <span style="color: var(--color-danger);">🚫 Prohibición absoluta de EBITDA Ajustado / Non-GAAP</span>
+        </div>
+      </div>
+
+      <div style="margin-top: var(--space-2xl); text-align: center;">
+        <p style="font-size: 0.72rem; color: var(--text-muted);">
+          Value Analyst v1.0.0<br>
+          Motor de análisis fundamental · Inversión en Valor<br>
+          Datos: Yahoo Finance vía yfinance
+        </p>
+      </div>
+    </div>
+
+    <!-- ─── Page: Wiki ─────────────────────────────────────── -->
+    <div id="page-wiki" class="page">
+      <h1 class="page__title">📖 Wiki de Valor</h1>
+      <p class="page__subtitle">Conceptos, métricas y filosofía de inversión fundamental</p>
+      
+      <div class="wiki-search-container">
+        <input id="input-wiki-search" class="modal__input" type="text" 
+               placeholder="🔍 Buscar métrica o palabra clave..." 
+               style="margin-bottom: var(--space-sm);">
+        
+        <div class="wiki-categories" style="display: flex; gap: var(--space-sm); margin-bottom: var(--space-md); overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; scrollbar-width: none;">
+          <button class="filter-chip active" id="chip-all" onclick="filterWikiCategory('all')">Todo</button>
+          <button class="filter-chip" id="chip-operativas" onclick="filterWikiCategory('operativas')">📊 Operativas</button>
+          <button class="filter-chip" id="chip-mercado" onclick="filterWikiCategory('mercado')">💰 Mercado & Div.</button>
+          <button class="filter-chip" id="chip-valuation" onclick="filterWikiCategory('valuation')">🧮 Valoración</button>
+          <button class="filter-chip" id="chip-qualitative" onclick="filterWikiCategory('qualitative')">🔍 Cualitativo</button>
+          <button class="filter-chip" id="chip-strategy" onclick="filterWikiCategory('strategy')">🚦 Estrategia</button>
+        </div>
+      </div>
+
+      <div id="wiki-list">
+        <!-- Dynamic cards -->
+      </div>
+    </div>
+
+    <!-- ─── Page: Admin (Admin only) ────────────────────────── -->
+    <div id="page-admin" class="page">
+      <h1 class="page__title" style="color: var(--accent-primary);">🛡️ Panel de Administración</h1>
+      <p class="page__subtitle">Gestión de usuarios y métricas del sistema</p>
+      
+      <div id="admin-users-list" style="margin-top: 1rem;">
+        <!-- Dynamic content -->
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══ Bottom Navigation ═══ -->
+  <nav class="bottom-nav">
+    <button class="bottom-nav__item active" data-page="dashboard">
+      <span class="bottom-nav__item-icon">📊</span>
+      Cartera
+    </button>
+    <button class="bottom-nav__item" data-page="detail">
+      <span class="bottom-nav__item-icon">📋</span>
+      Detalle
+    </button>
+    <button class="bottom-nav__item" data-page="explore">
+      <span class="bottom-nav__item-icon">🔍</span>
+      Explorar
+    </button>
+    <button class="bottom-nav__item" data-page="wiki">
+      <span class="bottom-nav__item-icon">📖</span>
+      Wiki
+    </button>
+    <button class="bottom-nav__item" data-page="settings">
+      <span class="bottom-nav__item-icon">⚙️</span>
+      Config.
+    </button>
+    <button id="nav-admin" class="bottom-nav__item" data-page="admin" style="display: none;">
+      <span class="bottom-nav__item-icon">🛡️</span>
+      Admin
+    </button>
+  </nav>
+
+  <!-- ═══ Add Ticker Modal ═══ -->
+  <div id="modal-add" class="modal-overlay">
+    <div class="modal">
+      <div class="modal__title">Añadir Empresa a Cartera</div>
+      <input id="input-ticker" class="modal__input" type="text" 
+             placeholder="Introduce el ticker (ej: AAPL, MSFT)" 
+             maxlength="10" autocomplete="off">
+      <div class="modal__actions">
+        <button class="btn-secondary" onclick="closeAddModal()">Cancelar</button>
+        <button class="btn-primary" onclick="addTicker()">Añadir</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Sidebar (Settings) ═══ -->
+  <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
+  <div id="sidebar" class="sidebar">
+    <div class="sidebar__title">
+      Configuración
+      <button class="sidebar__close" onclick="closeSidebar()">✕</button>
+    </div>
+
+    <div class="sidebar__section">
+      <div class="sidebar__section-title">Sesión</div>
+      
+      <div style="background: rgba(255,255,255,0.03); padding: 12px; border-radius: var(--radius-md); margin-bottom: var(--space-sm); border: 1px solid var(--border-subtle);">
+        <div style="font-size: 0.95rem; font-weight: 600; color: var(--text-primary);">
+          👤 <span class="current-username-display">Usuario</span>
+        </div>
+        <div class="current-role-display" style="font-size: 0.75rem; color: var(--accent-primary); margin-top: 4px; font-weight: 600;"></div>
+      </div>
+
+      <button class="sidebar__btn" onclick="logout()" style="color: var(--color-danger);">
+        <span class="sidebar__btn-icon">🚪</span>
+        Cerrar Sesión
+      </button>
+    </div>
+
+    <div class="sidebar__section">
+      <div class="sidebar__section-title">Información</div>
+      <div style="font-size: 0.8rem; color: var(--text-tertiary); line-height: 1.6;">
+        <p>Fuente de datos: Yahoo Finance</p>
+        <p>Modelo: Graham + DCF 10 años</p>
+        <p>WACC: 10% | Terminal: 2.5%</p>
+        <p style="color: var(--color-danger); margin-top: 8px;">
+          🚫 Non-GAAP rechazado
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Toast Notification ═══ -->
+  <div id="toast" class="toast"></div>
+
+  <!-- ═══ Scripts ═══ -->
+  <script src="app.js"></script>
+
+  <!-- ═══ Service Worker Registration ═══ -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
+  </script>
+
+</body>
+</html>
