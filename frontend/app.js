@@ -230,7 +230,7 @@ async function loadPortfolio() {
     state.portfolio = data.portfolio || [];
     renderPortfolio();
   } catch (err) {
-    container.innerHTML = renderEmptyState('📊', 'Error de conexión', 'No se pudo conectar con el servidor. Verifica que el backend esté ejecutándose.');
+    container.innerHTML = renderEmptyState('🍊', 'Error de conexión', 'No se pudo conectar con el servidor. Verifica que el backend esté ejecutándose.');
   }
 }
 

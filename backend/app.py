@@ -7,6 +7,7 @@ portfolio management, analysis, scanning, and authentication.
 import os
 import logging
 import datetime
+import time
 from functools import wraps
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
@@ -377,8 +378,12 @@ def update_all(current_user):
             'error': None
         }
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(analyze_ticker, t): t for t in tickers}
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        futures = {}
+        for t in tickers:
+            futures[executor.submit(analyze_ticker, t)] = t
+            time.sleep(2) # Retardo de 2 segundos para no enfadar a Yahoo Finance
+
         for future in as_completed(futures):
             try:
                 result = future.result()
