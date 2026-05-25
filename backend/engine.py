@@ -825,6 +825,8 @@ def generate_investment_thesis(analysis: dict) -> str:
     # Valuation
     if mos > 30:
         parts.append(f"Cotiza a ${price:.2f} vs valor intrínseco ${intrinsic:.2f} — Margen de seguridad amplio ({mos:.0f}%).")
+        if '⭐' in calidad or '✅' in calidad:
+            parts.append("⚠️ **Alerta Cualitativa:** Números excelentes pero con un castigo bursátil muy severo. Auditar si existe una disrupción permanente por parte de la competencia (pérdida de momentum, nuevos rivales) o si es un problema temporal.")
     elif mos > 20:
         parts.append(f"Margen de seguridad del {mos:.0f}% — dentro del rango aceptable para inversión valor.")
     elif mos > 0:

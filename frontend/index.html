@@ -13,7 +13,8 @@
   
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍊</text></svg>">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2">
+  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
 </head>
 <body>
   
@@ -86,15 +87,42 @@
       <p class="page__subtitle">Escanea el mercado en busca de empresas infravaloradas de alta calidad</p>
       
       <div class="explorer-search">
+        <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1rem; width: 100%;">
+          <div>
+            <label for="explore-market" style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Mercado:</label>
+            <select id="explore-market" class="modal__input" style="width: 100%; cursor: pointer;">
+              <optgroup label="🌍 Índices Globales">
+                <option value="sp500" selected>S&P 500 (EEUU)</option>
+                <option value="dowjones">Dow Jones (Clásicas EEUU)</option>
+                <option value="nasdaq">NASDAQ 100 (Tech)</option>
+                <option value="stoxx600">STOXX 600 (Europa)</option>
+                <option value="japan">Nikkei 225 (Japón)</option>
+              </optgroup>
+              <optgroup label="🎯 Sectores Temáticos">
+                <option value="pharma">Salud y Farma</option>
+                <option value="finance">Finanzas y Bancos</option>
+                <option value="consumer">Consumo y Retail</option>
+                <option value="energy">Energía y Utilities</option>
+                <option value="defense">Aeroespacial y Defensa</option>
+              </optgroup>
+            </select>
+          </div>
+          <div>
+            <label for="explore-profile" style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Perfil de Búsqueda:</label>
+            <select id="explore-profile" class="modal__input" style="width: 100%; cursor: pointer;" onchange="updateExploreChips()">
+              <option value="moderate" selected>Moderado</option>
+              <option value="conservative">Conservador</option>
+              <option value="aggressive">Agresivo</option>
+            </select>
+          </div>
+        </div>
+
         <button id="btn-explore" class="btn-explore" onclick="exploreOpportunities()">
           🔎 Buscar Oportunidades
         </button>
         
-        <div class="explorer-filters">
-          <span class="filter-chip">PER &lt; 20</span>
-          <span class="filter-chip">ROIC &gt; 12%</span>
-          <span class="filter-chip">FCF Yield &gt; 5%</span>
-          <span class="filter-chip">MoS &gt; 20%</span>
+        <div id="explorer-filters-container" class="explorer-filters">
+          <!-- Chips injected by JS -->
         </div>
       </div>
 
@@ -102,7 +130,7 @@
         <div class="empty-state">
           <div class="empty-state__icon">🔎</div>
           <div class="empty-state__title">Descubre oportunidades</div>
-          <div class="empty-state__text">Pulsa "Buscar Oportunidades" para escanear ~50 empresas del S&P 500 con criterios de inversión en valor.</div>
+          <div class="empty-state__text">Selecciona un mercado y un perfil para escanear ~50 empresas con criterios de inversión en valor.</div>
         </div>
       </div>
     </div>
@@ -289,7 +317,7 @@
   <div id="toast" class="toast"></div>
 
   <!-- ═══ Scripts ═══ -->
-  <script src="app.js"></script>
+  <script src="app.js?v=2"></script>
 
   <!-- ═══ Service Worker Registration ═══ -->
   <script>

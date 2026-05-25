@@ -203,7 +203,7 @@ function navigate(page, params = {}) {
   // Load data for page
   if (page === 'dashboard') loadPortfolio();
   if (page === 'detail' && params.ticker) loadCompanyDetail(params.ticker);
-  if (page === 'explore') {} // loaded on button click
+  if (page === 'explore') { window.updateExploreChips && window.updateExploreChips(); }
   if (page === 'wiki') loadWiki();
   if (page === 'admin') loadAdminPanel();
 }
@@ -400,6 +400,11 @@ function renderCompanyDetail(d) {
       </div>
     </div>
 
+    <!-- TradingView Chart -->
+    <div class="card" style="padding: 0; overflow: hidden; height: 350px; margin-bottom: var(--space-md); border-radius: var(--radius-md);">
+      <div id="tv_chart_container" style="height: 100%; width: 100%;"></div>
+    </div>
+
     <!-- Non-GAAP Flag -->
     ${d.non_gaap_flag && d.non_gaap_flag !== '✅ OK' ? `
       <div class="non-gaap-badge ${d.non_gaap_flag.includes('🚫') ? 'badge--negative' : 'badge--neutral'}" 
@@ -578,14 +583,65 @@ function renderCompanyDetail(d) {
         <div class="thesis-box__title">📝 TESIS DE INVERSIÓN</div>
         <div class="thesis-box__text">${d.thesis}</div>
       </div>
+      </div>
     ` : ''}
   `;
+
+  // Initialize TradingView Widget
+  if (typeof TradingView !== 'undefined') {
+    new TradingView.widget({
+      "autosize": true,
+      "symbol": d.ticker,
+      "interval": "D",
+      "timezone": "Etc/UTC",
+      "theme": "dark",
+      "style": "1",
+      "locale": "es",
+      "enable_publishing": false,
+      "backgroundColor": "rgba(30, 31, 35, 1)",
+      "gridColor": "rgba(43, 43, 54, 1)",
+      "hide_top_toolbar": true,
+      "save_image": false,
+      "container_id": "tv_chart_container"
+    });
+  }
 }
+
+// ─── Explorer Profiles ───────────────────────────────────────────
+const exploreProfiles = {
+  conservative: { max_per: 15, min_roic: 15, min_fcf_yield: 7, min_mos: 30 },
+  moderate: { max_per: 20, min_roic: 12, min_fcf_yield: 5, min_mos: 20 },
+  aggressive: { max_per: 25, min_roic: 8, min_fcf_yield: 3, min_mos: 10 }
+};
+
+window.updateExploreChips = function() {
+  const select = document.getElementById('explore-profile');
+  if (!select) return;
+  const profileKey = select.value;
+  const p = exploreProfiles[profileKey];
+  const container = document.getElementById('explorer-filters-container');
+  if (container) {
+    container.innerHTML = `
+      <span class="filter-chip">PER &lt; ${p.max_per}</span>
+      <span class="filter-chip">ROIC &gt; ${p.min_roic}%</span>
+      <span class="filter-chip">FCF Yield &gt; ${p.min_fcf_yield}%</span>
+      <span class="filter-chip">MoS &gt; ${p.min_mos}%</span>
+    `;
+  }
+};
 
 // ─── Explorer / NOVEDAD ─────────────────────────────────────────
 
 async function exploreOpportunities() {
   if (state.isExploring) return;
+  
+  const selectProfile = document.getElementById('explore-profile');
+  const profileKey = selectProfile ? selectProfile.value : 'moderate';
+  const p = exploreProfiles[profileKey];
+  
+  const selectMarket = document.getElementById('explore-market');
+  const market = selectMarket ? selectMarket.value : 'sp500';
+  const marketName = selectMarket ? selectMarket.options[selectMarket.selectedIndex].text : 'del mercado seleccionado';
   
   const btn = document.getElementById('btn-explore');
   const resultsContainer = document.getElementById('explorer-results');
@@ -597,13 +653,14 @@ async function exploreOpportunities() {
   resultsContainer.innerHTML = `
     <div class="progress-bar"><div class="progress-bar__fill" style="width: 60%"></div></div>
     <p style="text-align: center; color: var(--text-tertiary); font-size: 0.85rem;">
-      Analizando ~50 empresas S&P 500...<br>
+      Analizando ~50 empresas de <strong>${marketName}</strong>...<br>
       <span style="font-size: 0.75rem;">Esto puede tardar 1-2 minutos</span>
     </p>
   `;
 
   try {
-    const data = await apiGet('/explore');
+    const queryStr = `?market=${market}&max_per=${p.max_per}&min_roic=${p.min_roic}&min_fcf_yield=${p.min_fcf_yield}&min_mos=${p.min_mos}`;
+    const data = await apiGet('/explore' + queryStr);
     state.explorerResults = data.opportunities || [];
     renderExplorerResults();
   } catch (err) {
@@ -1045,6 +1102,15 @@ const wikiData = [
     concept: 'Representa el valor promedio de cotización que los analistas profesionales de bancos de inversión y firmas de análisis estiman que alcanzará la acción en un horizonte de 12 meses.',
     formula: 'Media Aritmética de las Estimaciones de Analistas (Target Mean Price en yfinance)',
     utility: 'Sirve como una referencia externa sobre el sentimiento del mercado institucional. Sin embargo, no debe usarse como sustituto del valor intrínseco fundamental (Graham/DCF), ya que los analistas institucionales suelen ser excesivamente influenciables por las tendencias a corto plazo y el precio reciente de cotización.'
+  },
+  {
+    id: 'quality-rating',
+    category: 'operativas',
+    title: '⭐ Calidad de la Empresa (El Algoritmo)',
+    short: 'La nota global de salud financiera y rentabilidad del negocio.',
+    concept: 'Es un sistema de puntuación interno (de 0 a 9 puntos) que evalúa si un negocio es estructuralmente sano. Premia a las empresas que generan mucho retorno por cada euro invertido (ROIC), cuyos beneficios (EPS) y caja (FCF) crecen año tras año, y que tienen un buen Margen de Seguridad.',
+    formula: 'Suma de puntos: ROIC > 20% (3pts), EPS creciente (2pts), FCF creciente (2pts), MoS > 30% (2pts).',
+    utility: '⭐ Alta Calidad (7 a 9 pts): Negocios excepcionales con fuertes ventajas competitivas (Wide Moat).\n✅ Calidad Aceptable (4 a 6 pts): Empresas sólidas y rentables.\n⚠️ Calidad Media (2 a 3 pts): Negocios estancados o muy dependientes del ciclo económico.\n❌ Calidad Baja (0 a 1 pt): Destructores de valor, altísimo riesgo. Huye de ellas.'
   }
 ];
 

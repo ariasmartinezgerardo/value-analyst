@@ -17,8 +17,15 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import logging
+import requests
+import time
 
 logger = logging.getLogger(__name__)
+
+# Simple in-memory cache to prevent yfinance IP bans
+_FETCH_CACHE = {}
+_QUICK_CACHE = {}
+CACHE_TTL = 3600  # 1 hour
 
 
 def _safe_get(df, key, col_idx=0, default=None):
@@ -50,6 +57,13 @@ def fetch_company_data(ticker_symbol: str) -> dict:
     Fetch comprehensive financial data for a company.
     Returns a structured dict with all data needed for analysis.
     """
+    ticker_clean = ticker_symbol.upper().strip()
+    now = time.time()
+    
+    if ticker_clean in _FETCH_CACHE and (now - _FETCH_CACHE[ticker_clean]['time'] < CACHE_TTL):
+        logger.info(f"Serving {ticker_clean} from local memory cache")
+        return _FETCH_CACHE[ticker_clean]['data']
+
     try:
         session = requests.Session()
         session.headers.update({
@@ -59,7 +73,7 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'Connection': 'keep-alive'
         })
         
-        stock = yf.Ticker(ticker_symbol.upper().strip(), session=session)
+        stock = yf.Ticker(ticker_clean)
         info = stock.info or {}
 
         # Guard: check if valid ticker
@@ -374,6 +388,7 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'error': None
         }
 
+        _FETCH_CACHE[ticker_clean] = {'time': now, 'data': result}
         return result
 
     except Exception as e:
@@ -386,31 +401,94 @@ def fetch_company_data(ticker_symbol: str) -> dict:
 
 def fetch_quick_info(ticker_symbol: str) -> dict:
     """Fetch minimal info for portfolio cards (fast)."""
+    ticker_clean = ticker_symbol.upper().strip()
+    now = time.time()
+    
+    if ticker_clean in _QUICK_CACHE and (now - _QUICK_CACHE[ticker_clean]['time'] < CACHE_TTL):
+        return _QUICK_CACHE[ticker_clean]['data']
+        
     try:
-        stock = yf.Ticker(ticker_symbol.upper().strip())
+        stock = yf.Ticker(ticker_clean)
         info = stock.info or {}
-        return {
-            'ticker': ticker_symbol.upper().strip(),
-            'empresa': info.get('longName') or info.get('shortName', ticker_symbol),
+        result = {
+            'ticker': ticker_clean,
+            'empresa': info.get('longName') or info.get('shortName', ticker_clean),
             'current_price': info.get('currentPrice') or info.get('regularMarketPrice', 0),
             'sector': info.get('sector', 'N/A'),
             'market_cap': info.get('marketCap', 0),
             'per_trailing': info.get('trailingPE'),
             'error': None
         }
+        _QUICK_CACHE[ticker_clean] = {'time': now, 'data': result}
+        return result
     except Exception as e:
-        return {
-            'ticker': ticker_symbol.upper().strip(),
-            'error': str(e)
-        }
+        logger.exception(f"Error quick fetching {ticker_symbol}")
+        return {'ticker': ticker_clean, 'error': str(e)}
 
 
-def get_sp500_tickers() -> list:
-    """Return a curated list of well-known S&P 500 tickers for the scanner."""
-    return [
-        'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'BRK-B', 'JNJ', 'V', 'PG', 'UNH',
-        'HD', 'MA', 'DIS', 'NVDA', 'PYPL', 'ADBE', 'NFLX', 'CMCSA', 'PFE', 'KO',
-        'PEP', 'TMO', 'COST', 'AVGO', 'CSCO', 'ABT', 'ACN', 'MRK', 'NKE', 'WMT',
-        'T', 'CVX', 'XOM', 'LLY', 'MCD', 'DHR', 'MDT', 'HON', 'AMGN', 'TXN',
-        'UNP', 'LIN', 'BMY', 'PM', 'LOW', 'RTX', 'SBUX', 'INTC', 'ORCL', 'IBM'
-    ]
+def get_market_tickers(market: str = 'sp500') -> list:
+    """Return a curated list of well-known tickers for the selected market."""
+    markets = {
+        'sp500': [
+            'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'BRK-B', 'JNJ', 'V', 'PG', 'UNH',
+            'HD', 'MA', 'DIS', 'NVDA', 'PYPL', 'ADBE', 'NFLX', 'CMCSA', 'PFE', 'KO',
+            'PEP', 'TMO', 'COST', 'AVGO', 'CSCO', 'ABT', 'ACN', 'MRK', 'NKE', 'WMT',
+            'T', 'CVX', 'XOM', 'LLY', 'MCD', 'DHR', 'MDT', 'HON', 'AMGN', 'TXN',
+            'UNP', 'LIN', 'BMY', 'PM', 'LOW', 'RTX', 'SBUX', 'INTC', 'ORCL', 'IBM'
+        ],
+        'nasdaq': [
+            'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'NVDA', 'AVGO', 'TSLA', 'ASML', 'COST',
+            'PEP', 'CSCO', 'TMUS', 'ADBE', 'TXN', 'NFLX', 'AMD', 'INTU', 'QCOM', 'AMAT',
+            'HON', 'AMGN', 'ISRG', 'SBUX', 'GILD', 'BKNG', 'MDLZ', 'ADI', 'LRCX', 'VRTX',
+            'REGN', 'ADP', 'MU', 'PANW', 'SNPS', 'KLAC', 'CDNS', 'MELI', 'CSX', 'PYPL',
+            'MAR', 'MNST', 'ORLY', 'NXPI', 'CTAS', 'PCAR', 'WDAY', 'CRWD', 'LULU', 'ROST'
+        ],
+        'stoxx600': [
+            'NVO', 'MC.PA', 'ASML.AS', 'SAP.DE', 'RMS.PA', 'SIE.DE', 'OR.PA', 'TTE.PA', 'SAN.PA', 'SU.PA',
+            'ALV.DE', 'AIR.PA', 'IBE.MC', 'ITX.MC', 'BNP.PA', 'DPW.DE', 'DTE.DE', 'MUV2.DE', 'ENGI.PA', 'SAN.MC',
+            'VCI.PA', 'BMW.DE', 'MBG.DE', 'BAS.DE', 'BAYN.DE', 'VOW3.DE', 'CS.PA', 'BN.PA', 'DG.PA', 'LR.PA',
+            'CABK.MC', 'REP.MC', 'BBVA.MC', 'TEF.MC', 'AENA.MC', 'FER.MC', 'AMS.MC', 'ANA.MC', 'ENG.MC', 'RED.MC',
+            'UNA.AS', 'HEIA.AS', 'INGA.AS', 'AD.AS', 'PRX.AS', 'AKZA.AS', 'ASM.AS', 'BESI.AS', 'DSM.AS', 'KPN.AS'
+        ],
+        'dowjones': [
+            'MMM', 'AXP', 'AMGN', 'AAPL', 'BA', 'CAT', 'CVX', 'CSCO', 'KO', 'DIS',
+            'DOW', 'GS', 'HD', 'HON', 'IBM', 'INTC', 'JNJ', 'JPM', 'MCD', 'MRK',
+            'MSFT', 'NKE', 'PG', 'CRM', 'TRV', 'UNH', 'VZ', 'V', 'WBA', 'WMT'
+        ],
+        'japan': [
+            'TM', 'SONY', 'KEY', 'MUFG', 'NTTYY', 'SMFG', 'MITSF', 'HMC', 'TAK', 'CAJ',
+            'SFTBY', 'FUJIY', 'PCRFY', 'DCSO', 'NSANY', 'MRAAY', 'KUBTY', 'NIPNY', 'MZHOF', 'RNMBY',
+            'TDK', 'DNZOY', 'KAO', 'FJTSY', 'MCO', 'SHCAY', 'YAMCY', 'SNE', 'SMNNY', 'KMTUY',
+            'FANUY', 'TKOMY', 'TYHOY', 'AONNY', 'SSUMY', 'KMBUY', 'ITOCY', 'MIELY', 'MTU', 'MFG'
+        ],
+        'pharma': [
+            'JNJ', 'LLY', 'NVO', 'UNH', 'MRK', 'ABBV', 'TMO', 'AZN', 'NVS', 'DHR',
+            'PFE', 'AMGN', 'ABT', 'ISRG', 'SYK', 'MDT', 'VRTX', 'REGN', 'BSX', 'ZTS',
+            'GSK', 'GILD', 'BDX', 'CVS', 'CI', 'ELV', 'HUM', 'MCK', 'CNC', 'BIIB',
+            'ILMN', 'IDXX', 'ALGN', 'DXCM', 'RMD', 'STE', 'WST', 'CRL', 'BIO', 'TECH'
+        ],
+        'finance': [
+            'JPM', 'V', 'MA', 'BAC', 'WFC', 'MS', 'GS', 'SPGI', 'AXP', 'RY',
+            'C', 'SCHW', 'BLK', 'CB', 'PGR', 'CME', 'MMC', 'TD', 'USB', 'PNC',
+            'TFC', 'COF', 'BK', 'AON', 'ICE', 'MCO', 'AIG', 'PRU', 'MET', 'TRV',
+            'ALL', 'DFS', 'SYF', 'FITB', 'MTB', 'HBAN', 'RF', 'CFG', 'KEY', 'CMA'
+        ],
+        'consumer': [
+            'WMT', 'PG', 'KO', 'PEP', 'COST', 'LVMH.PA', 'HD', 'MCD', 'NKE', 'SBUX',
+            'TGT', 'LOW', 'EL', 'CL', 'KMB', 'GIS', 'SYY', 'HSY', 'K', 'CAG',
+            'DG', 'DLTR', 'ROST', 'TJX', 'ORLY', 'AZO', 'TSCO', 'YUM', 'DRI', 'CMG',
+            'DPZ', 'M', 'JWN', 'GPS', 'KSS', 'VFC', 'UAA', 'RCL', 'CCL', 'HLT'
+        ],
+        'energy': [
+            'XOM', 'CVX', 'SHEL', 'TTE', 'BP', 'COP', 'EOG', 'PXD', 'OXY', 'VLO',
+            'MPC', 'PSX', 'HES', 'DVN', 'HAL', 'SLB', 'BKR', 'KMI', 'WMB', 'OKE',
+            'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'XEL', 'SRE', 'WEC', 'ES',
+            'ED', 'PEG', 'EIX', 'AWK', 'CNP', 'CMS', 'LNT', 'ATO', 'NI', 'NRG'
+        ],
+        'defense': [
+            'LMT', 'RTX', 'NOC', 'GD', 'BA', 'LHX', 'HII', 'TDG', 'TXT', 'LDOS',
+            'BA.L', 'HO.PA', 'SAF.PA', 'RHO.PA', 'LDO.MI', 'MTX.DE', 'SU.PA', 'AM.PA',
+            'HEI', 'WWD', 'BWXT', 'PLTR', 'OSK', 'AVAV', 'KTOS', 'HWM', 'SPR', 'RKLB'
+        ]
+    }
+    return markets.get(market.lower(), markets['sp500'])

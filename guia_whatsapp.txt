@@ -1,0 +1,25 @@
+🍊 *BIENVENIDOS A NARANJOS INVESTMENT* 🍊
+Tu nueva plataforma privada de análisis fundamental e inversión en valor.
+
+🔗 *Enlace de acceso:*
+[Pega aquí tu enlace de Ngrok terminado en .ngrok-free.app]
+
+*¿Cómo empezar a usarla?* Es súper fácil:
+
+1️⃣ *CREA TU CUENTA:*
+Entra al enlace, pincha en "Registrarse" y crea tu usuario. Tus datos y las empresas que guardes serán 100% privados y solo tú podrás verlos.
+
+2️⃣ *AÑADE EMPRESAS A TU CARTERA:*
+Busca cualquier empresa del mundo usando su "Ticker" (ejemplo: AAPL para Apple, MSFT para Microsoft, SAN.MC para Banco Santander). La app conectará con Wall Street y descargará años de informes financieros en segundos.
+
+3️⃣ *EL SEMÁFORO DE CALIDAD:*
+Olvídate de leer balances aburridos. La app te resumirá la salud de la empresa con semáforos:
+🟢 *Verde:* La empresa es una máquina de hacer dinero.
+🟡 *Naranja:* Tiene algunos problemas, cuidado.
+🔴 *Rojo:* ¡Huye! Sus cuentas son un desastre.
+
+4️⃣ *VALOR INTRÍNSECO Y MARGEN DE SEGURIDAD:*
+La app calcula automáticamente lo que *realmente vale* la empresa usando las fórmulas secretas de Benjamin Graham y modelos matemáticos de descuento de flujos (DCF). 
+Si el precio en bolsa está muy por debajo de su valor real, verás un *Margen de Seguridad en verde* (¡Oportunidad de compra! 🤑).
+
+¡Guarda esta web en tus favoritos del móvil y empieza a invertir con cabeza! 📈🚀

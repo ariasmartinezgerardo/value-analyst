@@ -6,7 +6,7 @@ Filters by quantitative value investing criteria.
 
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from fetcher import fetch_company_data, get_sp500_tickers
+from fetcher import fetch_company_data, get_market_tickers
 from engine import run_full_analysis, generate_investment_thesis
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ DEFAULT_CRITERIA = {
 }
 
 
-def scan_opportunities(criteria: dict = None, max_stocks: int = 20) -> list:
+def scan_opportunities(criteria: dict = None, max_stocks: int = 20, market: str = 'sp500') -> list:
     """
     Scan the stock universe for value investing opportunities.
 
@@ -41,7 +41,7 @@ def scan_opportunities(criteria: dict = None, max_stocks: int = 20) -> list:
     if criteria is None:
         criteria = DEFAULT_CRITERIA
 
-    tickers = get_sp500_tickers()
+    tickers = get_market_tickers(market)
     opportunities = []
     errors = []
 
@@ -134,7 +134,7 @@ def scan_quick(tickers_list: list = None) -> list:
     Returns all results without strict filtering.
     """
     if tickers_list is None:
-        tickers_list = get_sp500_tickers()[:10]
+        tickers_list = get_market_tickers('sp500')[:10]
 
     results = []
 

@@ -1,0 +1,22 @@
+🚨 *ACTUALIZACIÓN IMPORTANTE: NARANJOS INVESTMENT* 🚨
+
+Chicos, acabamos de meterle una actualización brutal al sistema de escaneo de empresas. Si entráis ahora a la aplicación vais a ver cambios bastante top:
+
+🎨 *1. Nuevo Diseño Premium*
+Le hemos dado un lavado de cara a la web. Adiós al aspecto de "herramienta de frikis" y hola al modo oscuro con toques naranjas, mucho más limpio y profesional. 
+
+🔍 *2. Escáner Internacional y por Sectores*
+¡Se acabó estar limitados a Estados Unidos! En la pestaña *Explorar* ahora tenéis un menú desplegable para elegir dónde queréis que el algoritmo busque los chollos:
+🌍 *Índices:* S&P 500, Dow Jones, STOXX 600 (Europa) y Nikkei 225 (Japón).
+🎯 *Sectores:* Salud/Farma, Bancos, Consumo, Energía y Aeroespacial/Defensa.
+
+⚙️ *3. Perfiles de Inversor*
+Justo debajo del mercado, ahora podéis decirle al algoritmo cómo de agresivo queréis que sea buscando:
+🟢 *Moderado:* El punto dulce del Value Investing.
+🟡 *Conservador:* Solo os sacará empresas extraordinarias a precios ridículos (modo "caza chollos" extremo).
+🔴 *Agresivo:* Para buscar tecnológicas o empresas de crecimiento aunque coticen un pelín más caras.
+
+📖 *4. Nueva Wiki y Sistema de Calidad*
+Si alguna vez os habéis preguntado de dónde sale el texto de "Calidad Baja" o "Alta Calidad" que le ponemos a las empresas, id a la pestaña de la *Wiki*. Os hemos dejado la fórmula secreta (El Algoritmo) con el que el servidor puntúa la rentabilidad y la deuda de las empresas.
+
+👉 *Si no veis los cambios en el móvil, cerrad la pestaña y volved a abrir el enlace. ¡Probadlo y me decís qué os parece!*

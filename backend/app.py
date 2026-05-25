@@ -31,6 +31,15 @@ logger = logging.getLogger(__name__)
 # Initialize database
 db.init_db()
 
+# Prevent caching of static files (HTML, JS, CSS)
+@app.after_request
+def add_header(response):
+    response.cache_control.max_age = 0
+    response.cache_control.no_cache = True
+    response.cache_control.no_store = True
+    response.cache_control.must_revalidate = True
+    return response
+
 
 # ─── Auth Decorator ───────────────────────────────────────────────
 
@@ -417,9 +426,10 @@ def explore(current_user):
         'min_fcf_yield': float(request.args.get('min_fcf_yield', 5)),
         'min_mos': float(request.args.get('min_mos', 20)),
     }
+    market = request.args.get('market', 'sp500')
 
-    logger.info(f"User {current_user['username']} starting opportunity scan with criteria: {criteria}")
-    opportunities = scan_opportunities(criteria=criteria)
+    logger.info(f"User {current_user['username']} starting opportunity scan in {market} with criteria: {criteria}")
+    opportunities = scan_opportunities(criteria=criteria, market=market)
     logger.info(f"Scan complete: {len(opportunities)} opportunities found")
 
     return jsonify({
