@@ -1,8 +1,3 @@
-databases:
-  - name: value-analyst-db
-    databaseName: value_analyst
-    user: admin
-
 services:
   - type: web
     name: value-analyst-web
@@ -11,8 +6,6 @@ services:
     startCommand: cd backend && gunicorn app:app -b 0.0.0.0:$PORT
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: value-analyst-db
-          property: connectionString
+        sync: false
       - key: SECRET_KEY
         generateValue: true
