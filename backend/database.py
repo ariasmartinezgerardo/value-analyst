@@ -240,5 +240,3 @@ def get_latest_analysis(user_id: int, ticker: str):
         ).order_by(history_table.c.fecha_consulta.desc()).limit(1)
         row = conn.execute(stmt).mappings().first()
         return dict(row) if row else None
-
-init_db()

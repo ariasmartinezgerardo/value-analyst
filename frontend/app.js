@@ -29,9 +29,24 @@ function formatNumber(num, decimals = 2) {
   return Number(num).toFixed(decimals);
 }
 
-function formatCurrency(num) {
+const CURRENCY_SYMBOLS = {
+  USD: '$', EUR: '€', GBP: '£', JPY: '¥', CNY: '¥', CHF: 'Fr.',
+  CAD: 'C$', AUD: 'A$', HKD: 'HK$', SGD: 'S$', NZD: 'NZ$',
+  SEK: 'kr', NOK: 'kr', DKK: 'kr', ISK: 'kr',
+  KRW: '₩', TWD: 'NT$', INR: '₹', BRL: 'R$', MXN: 'MX$',
+  ZAR: 'R', TRY: '₺', PLN: 'zł', CZK: 'Kč', HUF: 'Ft',
+  ILS: '₪', THB: '฿', MYR: 'RM', IDR: 'Rp', PHP: '₱', VND: '₫',
+  ARS: 'AR$', CLP: 'CL$', COP: 'CO$', PEN: 'S/.',
+};
+
+function getCurrencySymbol(code) {
+  return CURRENCY_SYMBOLS[(code || 'USD').toUpperCase()] || (code || '$') + ' ';
+}
+
+function formatCurrency(num, currencyCode) {
   if (num === null || num === undefined || isNaN(num)) return '—';
-  return '$' + Number(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const sym = getCurrencySymbol(currencyCode);
+  return sym + Number(num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatLargeNumber(num) {
@@ -349,6 +364,7 @@ async function removeTicker(ticker) {
   }
 }
 
+
 // ─── Company Detail ─────────────────────────────────────────────
 
 async function loadCompanyDetail(ticker) {
@@ -383,8 +399,17 @@ async function loadCompanyDetail(ticker) {
 
 function renderCompanyDetail(d) {
   const container = document.getElementById('detail-content');
+  const cur = d.currency || 'USD';
   
   const mosColor = getMosColor(d.margen_seguridad);
+
+  // Dividend yield display with sanity check
+  let divYieldDisplay = '—';
+  if (d.dividend_yield_valid === false) {
+    divYieldDisplay = '⚠️ Dato no fiable';
+  } else if (d.dividend_yield) {
+    divYieldDisplay = formatPercent(d.dividend_yield * 100);
+  }
   
   container.innerHTML = `
     <!-- Header -->
@@ -395,10 +420,19 @@ function renderCompanyDetail(d) {
         <div class="detail-header__company">${d.empresa}</div>
       </div>
       <div class="detail-header__price">
-        <div class="detail-header__price-value">${formatCurrency(d.current_price)}</div>
+        <div class="detail-header__price-value">${formatCurrency(d.current_price, cur)}</div>
         <span class="detail-header__sector">${d.sector}</span>
       </div>
     </div>
+
+    <!-- Archetype Badge -->
+    ${d.archetype_label ? `
+      <div style="display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-bottom: var(--space-md); align-items: center;">
+        <span class="badge--positive" style="font-size: 0.72rem; padding: 4px 10px; border-radius: 20px; font-weight: 700;">${d.archetype_label}</span>
+        <span style="font-size: 0.68rem; color: var(--text-tertiary);">WACC: ${d.wacc_used ? formatPercent(d.wacc_used * 100) : '10%'} · ${cur}</span>
+        ${d.valuation_models_used ? `<span style="font-size: 0.68rem; color: var(--text-tertiary);">· Modelos: ${d.valuation_models_used.join(', ')}</span>` : ''}
+      </div>
+    ` : ''}
 
     <!-- TradingView Chart -->
     <div class="card" style="padding: 0; overflow: hidden; height: 350px; margin-bottom: var(--space-md); border-radius: var(--radius-md);">
@@ -433,8 +467,8 @@ function renderCompanyDetail(d) {
         <tbody>
           <tr>
             <td class="metrics-table__metric">EPS</td>
-            ${(d.eps_values || []).map(val => `<td class="metrics-table__value">${formatCurrency(val)}</td>`).reverse().join('')}
-            <td class="metrics-table__value">${formatCurrency(d.eps_ttm)}</td>
+            ${(d.eps_values || []).map(val => `<td class="metrics-table__value">${formatCurrency(val, cur)}</td>`).reverse().join('')}
+            <td class="metrics-table__value">${formatCurrency(d.eps_ttm, cur)}</td>
             <td class="metrics-table__trend">${getTrendEmoji(d.eps_trend)}</td>
           </tr>
           <tr>
@@ -470,13 +504,52 @@ function renderCompanyDetail(d) {
       <div class="semaforo-card__icon">${getSemaforoEmoji(d.estado_semaforo)}</div>
       <div class="semaforo-card__content">
         <div class="semaforo-card__status">${d.estado_semaforo || 'SIN CLASIFICAR'}</div>
-        <div class="semaforo-card__details">
-          <span>Abs (Graham/DCF): <strong>${formatPercent(d.ms_absoluto)}</strong></span>
-          <span style="margin: 0 var(--space-xs); color: var(--text-muted);">|</span>
-          <span>Rel (${d.multiple_type || 'N/A'}): <strong>${formatPercent(d.ms_relativo)}</strong></span>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); margin: var(--space-md) 0;">
+          <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Fundamentales (DCF)</div>
+            <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_absoluto >= 0 ? 'var(--color-success)' : 'var(--color-danger)'};">
+              ${d.ms_absoluto >= 0 ? 'Descuento: ' + formatPercent(d.ms_absoluto) : 'Sobreprecio: ' + formatPercent(Math.abs(d.ms_absoluto))}
+            </div>
+          </div>
+          <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+            <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Histórico (${d.multiple_type || 'N/A'})</div>
+            <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_relativo >= 0 ? 'var(--color-success)' : 'var(--color-warning)'};">
+              ${d.ms_relativo >= 0 ? 'Descuento: ' + formatPercent(d.ms_relativo) : 'Sobreprecio: ' + formatPercent(Math.abs(d.ms_relativo))}
+            </div>
+          </div>
         </div>
         <div class="semaforo-card__meaning">
           ${getSemaforoMeaning(d.estado_semaforo)}
+        </div>
+      </div>
+    </div>
+
+    <!-- Phase 3: Margins and Debt Ratios -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-md);">
+      <div class="card">
+        <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">📊 RENTABILIDAD Y MÁRGENES</div>
+        <div class="info-row">
+          <span class="info-row__label">Margen Bruto</span>
+          <span class="info-row__value">${d.current_gross_margin != null ? formatPercent(d.current_gross_margin * 100) : '—'}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-row__label">Margen Operativo</span>
+          <span class="info-row__value">${d.current_operating_margin != null ? formatPercent(d.current_operating_margin * 100) : '—'}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-row__label">Margen Neto</span>
+          <span class="info-row__value">${d.current_net_margin != null ? formatPercent(d.current_net_margin * 100) : '—'}</span>
+        </div>
+      </div>
+      <div class="card">
+        <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">🏦 SALUD FINANCIERA (DEUDA)</div>
+        <div class="info-row">
+          <span class="info-row__label" title="Cobertura de intereses (EBIT / Gastos Financieros). >3x es seguro.">Interest Coverage</span>
+          <span class="info-row__value" style="color: ${d.interest_coverage != null && d.interest_coverage < 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.interest_coverage != null ? (d.interest_coverage > 900 ? 'Sin Deuda' : formatNumber(d.interest_coverage, 1) + 'x') : '—'}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-row__label" title="Net Debt / EBITDA. <3x es seguro.">Net Debt / EBITDA</span>
+          <span class="info-row__value" style="color: ${d.net_debt_ebitda != null && d.net_debt_ebitda > 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.net_debt_ebitda != null ? formatNumber(d.net_debt_ebitda, 1) + 'x' : '—'}</span>
         </div>
       </div>
     </div>
@@ -535,7 +608,7 @@ function renderCompanyDetail(d) {
       </div>
       <div class="info-row">
         <span class="info-row__label">Div. Yield</span>
-        <span class="info-row__value">${d.dividend_yield ? formatPercent(d.dividend_yield * 100) : '—'}</span>
+        <span class="info-row__value">${divYieldDisplay}</span>
       </div>
       <div class="info-row">
         <span class="info-row__label">Crecimiento Est.</span>
@@ -543,7 +616,11 @@ function renderCompanyDetail(d) {
       </div>
       <div class="info-row">
         <span class="info-row__label">Precio Objetivo Analistas</span>
-        <span class="info-row__value">${d.analyst_target ? formatCurrency(d.analyst_target) : '—'}</span>
+        <span class="info-row__value">${d.analyst_target ? formatCurrency(d.analyst_target, cur) : '—'}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-row__label">Moneda</span>
+        <span class="info-row__value">${cur}${d.financial_currency && d.financial_currency !== cur ? ' (Reporta en ' + d.financial_currency + ')' : ''}</span>
       </div>
     </div>
 
@@ -551,17 +628,32 @@ function renderCompanyDetail(d) {
     <div class="valuation-box">
       <div class="valuation-box__title">💎 VALORACIÓN INTRÍNSECA</div>
       
+      ${d.graham_value && d.graham_value > 0 ? `
       <div class="valuation-box__row">
         <span class="valuation-box__label">Graham</span>
-        <span class="valuation-box__value">${formatCurrency(d.graham_value)}</span>
+        <span class="valuation-box__value">${formatCurrency(d.graham_value, cur)}</span>
       </div>
+      ` : ''}
+      ${d.dcf_value && d.dcf_value > 0 ? `
       <div class="valuation-box__row">
-        <span class="valuation-box__label">DCF (10a)</span>
-        <span class="valuation-box__value">${formatCurrency(d.dcf_value)}</span>
+        <span class="valuation-box__label">${
+          d.archetype_id === 'hypergrowth' ? 'DCF Revenue' :
+          d.archetype_id === 'compounder' ? 'DCF (Multi-Fase)' :
+          d.archetype_id === 'speculative' ? 'DCF (Tentativo)' :
+          'DCF (10a)'
+        }</span>
+        <span class="valuation-box__value">${formatCurrency(d.dcf_value, cur)}</span>
       </div>
+      ` : ''}
+      ${d.alt_value && d.alt_model_name ? `
+      <div class="valuation-box__row">
+        <span class="valuation-box__label">${d.alt_model_name}</span>
+        <span class="valuation-box__value">${formatCurrency(d.alt_value, cur)}</span>
+      </div>
+      ` : ''}
       <div class="valuation-box__row">
         <span class="valuation-box__label">Precio Mercado</span>
-        <span class="valuation-box__value" style="color: var(--text-primary)">${formatCurrency(d.current_price)}</span>
+        <span class="valuation-box__value" style="color: var(--text-primary)">${formatCurrency(d.current_price, cur)}</span>
       </div>
       
       <div class="valuation-box__divider"></div>
@@ -935,11 +1027,11 @@ const wikiData = [
   {
     id: 'wacc',
     category: 'valuation',
-    title: '🎯 WACC (Costo Medio Ponderado del Capital)',
-    short: 'La tasa de descuento utilizada para traer los flujos de caja futuros al presente.',
-    concept: 'Es el coste medio ponderado que le cuesta a la empresa financiar sus activos mediante fondos propios y deuda. En la aplicación se utiliza un WACC estándar y prudente del 10.0% como tasa de descuento para el modelo de Flujo de Caja Descontado (DCF), reflejando la rentabilidad mínima exigida por un inversor de valor.',
-    formula: '10.0% por defecto (Estándar de descuento conservador en Configuración)',
-    utility: 'Determina el valor presente de los flujos de caja futuros. A mayor WACC (tasa de descuento), menor será el valor intrínseco resultante, protegiendo al inversor contra estimaciones demasiado optimistas.'
+    title: '🎯 WACC Variable (Costo Medio Ponderado del Capital)',
+    short: 'La tasa de descuento utilizada para traer los flujos de caja futuros al presente, ajustada por riesgo.',
+    concept: 'Es el coste medio ponderado que le cuesta a la empresa financiar sus activos mediante fondos propios y deuda. En la aplicación el WACC es dinámico: las Utilities estables descuentan al 7-9%, las tecnológicas maduras al 9-10%, y el riesgo se ajusta según la capitalización de mercado (las Small Caps añaden +2% de riesgo).',
+    formula: 'Tasa base por Sector ± Prima por Tamaño de Capitalización',
+    utility: 'A mayor WACC (tasa de descuento), menor será el valor intrínseco resultante. El WACC variable penaliza a las empresas de alto riesgo y tamaño pequeño, recompensando a monopolios maduros con alta predictibilidad.'
   },
   {
     id: 'graham-value',
@@ -953,11 +1045,11 @@ const wikiData = [
   {
     id: 'dcf-value',
     category: 'valuation',
-    title: '💎 Discounted Cash Flow (DCF - 10 años)',
-    short: 'Valoración teórica descontando los flujos de caja libres del futuro al presente.',
-    concept: 'Mapea la capacidad futura del negocio de generar caja. Se proyecta el FCF Real durante 10 años con la tasa de crecimiento esperada, se le suma el valor terminal perpetuo (crecimiento perpetuo del 2.5%) y se descuentan todos los flujos al presente usando un WACC (coste de capital) estándar del 10%.',
-    formula: 'NPV(Proyección FCF a 10 años) + NPV(Valor Terminal Perpetuo)',
-    utility: 'Es la metodología de valoración más rigurosa a nivel financiero. Es ideal para negocios sólidos en crecimiento cuyas ventajas competitivas garantizan la generación sostenida de flujos de efectivo.'
+    title: '💎 Discounted Cash Flow Dinámico (DCF)',
+    short: 'Valoración teórica descontando los flujos de caja futuros al presente.',
+    concept: 'Mapea la capacidad futura del negocio de generar caja. La app utiliza un motor adaptativo: para empresas maduras usa un DCF estándar (10 años); para "Compounders" usa un DCF Multi-Fase (alto crecimiento inicial que decae a la media); y para empresas de Hipercrecimiento usa un DCF basado en Revenue con márgenes objetivo.',
+    formula: 'Σ NPV(Flujos Proyectados según Arquetipo) + NPV(Valor Terminal Perpetuo a 2.5%)',
+    utility: 'Es la metodología de valoración más rigurosa a nivel financiero. Al adaptarse al "arquetipo" de la empresa, evita valorar a una biotecnológica emergente con las mismas reglas que a un banco consolidado.'
   },
   {
     id: 'per',
@@ -1111,6 +1203,96 @@ const wikiData = [
     concept: 'Es un sistema de puntuación interno (de 0 a 9 puntos) que evalúa si un negocio es estructuralmente sano. Premia a las empresas que generan mucho retorno por cada euro invertido (ROIC), cuyos beneficios (EPS) y caja (FCF) crecen año tras año, y que tienen un buen Margen de Seguridad.',
     formula: 'Suma de puntos: ROIC > 20% (3pts), EPS creciente (2pts), FCF creciente (2pts), MoS > 30% (2pts).',
     utility: '⭐ Alta Calidad (7 a 9 pts): Negocios excepcionales con fuertes ventajas competitivas (Wide Moat).\n✅ Calidad Aceptable (4 a 6 pts): Empresas sólidas y rentables.\n⚠️ Calidad Media (2 a 3 pts): Negocios estancados o muy dependientes del ciclo económico.\n❌ Calidad Baja (0 a 1 pt): Destructores de valor, altísimo riesgo. Huye de ellas.'
+  },
+  {
+    id: 'interest-coverage',
+    category: 'operativas',
+    title: '🏦 Cobertura de Intereses (Interest Coverage)',
+    short: 'Capacidad de la empresa para pagar los intereses de su deuda con su beneficio operativo.',
+    concept: 'Indica cuántas veces podría la empresa pagar sus gastos financieros (intereses) utilizando su Beneficio Operativo (EBIT). Es una métrica vital de solvencia. Si el ratio cae por debajo de 3x, significa que la empresa destina una parte peligrosa de su beneficio a pagar al banco, acercándose al riesgo de quiebra si sus ventas caen.',
+    formula: 'EBIT / Gastos por Intereses',
+    utility: 'Evita caer en "Value Traps" (trampas de valor). Una empresa puede cotizar muy barata, pero si su Cobertura de Intereses es roja (<3x), el mercado está descontando un posible colapso crediticio.'
+  },
+  {
+    id: 'net-debt-ebitda',
+    category: 'operativas',
+    title: '💳 Net Debt / EBITDA',
+    short: 'Los años que tardaría la empresa en pagar toda su deuda si el EBITDA se mantuviera constante.',
+    concept: 'Mide el apalancamiento bruto de la empresa descontando la caja que ya tiene en el banco. Compara la deuda neta contra la capacidad bruta de generar caja (EBITDA). Un valor por encima de 3x se considera deuda de alto riesgo ("High Yield" o bono basura).',
+    formula: '(Deuda Total - Efectivo y Equivalentes) / EBITDA',
+    utility: 'Es el ratio de apalancamiento más utilizado en banca de inversión. Te ayuda a ver instantáneamente si la empresa está abusando del endeudamiento para crecer o si tiene un balance "fortaleza" (ratio < 1x).'
+  },
+  {
+    id: 'margenes-rentabilidad',
+    category: 'operativas',
+    title: '📊 Análisis de Márgenes (Bruto, Op. y Neto)',
+    short: 'La conversión de cada dólar vendido en beneficio contante y sonante.',
+    concept: 'El Margen Bruto revela si la empresa tiene "Pricing Power" (si puede subir precios sin perder clientes). El Margen Operativo indica la eficiencia de sus costes fijos (marketing, I+D). El Margen Neto es lo que queda al final tras pagar impuestos e intereses.',
+    formula: 'Beneficio Bruto (o EBIT, o Neto) / Ventas Totales',
+    utility: 'Si el Margen Bruto es > 40-50%, la empresa tiene un excelente Foso Económico. Si los márgenes se estrechan con el tiempo, la competencia está destruyendo sus ventajas.'
+  },
+  {
+    id: 'growth-haircut',
+    category: 'valuation',
+    title: '✂️ Recorte Preventivo de Crecimiento (Haircut)',
+    short: 'Auditoría cruzada para evitar estimaciones de crecimiento irreales.',
+    concept: 'Si las previsiones estiman que el EPS crecerá a un 30% anual pero históricamente las Ventas (Revenue) solo crecen al 5%, la aplicación asume que es insostenible (provocado por recompras masivas o expansión temporal de márgenes).',
+    formula: 'Si EPS Growth > 1.5x Revenue Growth → Growth = Revenue Growth * 1.5',
+    utility: 'Ancla las expectativas del algoritmo a la realidad de las ventas orgánicas. Impide que compremos empresas basándonos en proyecciones artificialmente infladas.'
+  },
+  {
+    id: 'arquetipos-valoracion',
+    category: 'valuation',
+    title: '🧩 Arquetipos de Valoración',
+    short: 'Clasificación automática para usar el modelo matemático correcto según el tipo de empresa.',
+    concept: 'No puedes valorar a un Banco usando el modelo de crecimiento de Benjamin Graham, ni a una empresa de alto crecimiento sin beneficios usando PER. La app clasifica cada empresa en: Classic Value, Compounder, Hypergrowth, Financiero o REIT/Utility.',
+    formula: 'Clasificación basada en el Sector, EPS, ROIC y Tasa de Crecimiento.',
+    utility: 'Aplica a las Financieras el ratio P/Book, a las Utilities el modelo DDM (Descuento de Dividendos) y a las Tecnológicas el DCF. Esto da como resultado valoraciones realistas y fiables.'
+  },
+  {
+    id: 'compounder',
+    category: 'strategy',
+    title: '🚀 Compounder (Componedora de Capital)',
+    short: 'El santo grial del Value Investing: crecimiento y rentabilidad excepcionales.',
+    concept: 'Empresas con fortísimas ventajas competitivas (Wide Moat), un ROIC mantenido muy alto (>15-20%) y capaces de crecer a tasas de doble dígito (15-25%) de forma consistente durante años. Reinvierten su caja a altísimas tasas de retorno.',
+    formula: 'Se valoran usando un DCF Multi-Fase (crecimiento inicial alto que decae progresivamente).',
+    utility: 'Son empresas que de media cotizan "caras" (PER alto), pero que justifican esa valoración gracias a su brutal efecto compuesto a largo plazo (ej. Microsoft, Visa, ASML).'
+  },
+  {
+    id: 'hypergrowth',
+    category: 'strategy',
+    title: '🔥 Hypergrowth (Hipercrecimiento)',
+    short: 'Empresas disruptivas creciendo a tasas salvajes, a menudo sin beneficios actuales.',
+    concept: 'Compañías emergentes o líderes de nuevas tendencias (IA, Cloud, Biotech) que crecen en ventas a más del +30% anual. Sus beneficios contables (EPS) suelen ser nulos o negativos porque reinvierten todo en expandirse y dominar el mercado.',
+    formula: 'Se valoran usando un DCF basado en Ventas (Revenue) proyectando márgenes futuros.',
+    utility: 'Alto riesgo, alta recompensa. La app penaliza el valor si los márgenes proyectados no son realistas. El Graham arrojará 0€, dependemos puramente de sus ventas futuras.'
+  },
+  {
+    id: 'classic-value',
+    category: 'strategy',
+    title: '🕰️ Classic Value (Valor Clásico)',
+    short: 'Negocios maduros, aburridos pero altamente predecibles y rentables.',
+    concept: 'Empresas industriales, de consumo defensivo o maduras que crecen poco (0-10% anual) pero son auténticas "vacas lecheras" (*Cash Cows*). Generan montañas de Flujo de Caja Libre real y suelen repartirlo en jugosos dividendos o recompras de acciones.',
+    formula: 'Se valoran usando el modelo de Benjamin Graham tradicional y el DCF a 10 años.',
+    utility: 'El foco principal de Warren Buffett en sus inicios. Son inversiones muy seguras si se compran con un buen margen de seguridad y tienen un suelo de valoración muy sólido.'
+  },
+  {
+    id: 'financial-reit',
+    category: 'strategy',
+    title: '🏦 Financieras y REITs',
+    short: 'Bancos, aseguradoras y Sociedades Anónimas Cotizadas de Inversión Inmobiliaria.',
+    concept: 'Negocios cuyo "producto" es el propio dinero o propiedades inmobiliarias. Sus balances no se pueden analizar como los de una empresa normal (tienen deuda masiva que en realidad son depósitos de clientes).',
+    formula: 'Las Financieras se valoran usando Precio/Valor en Libros (Price to Book Justificado). Los REITs con el Modelo de Descuento de Dividendos (DDM).',
+    utility: 'La app desactiva automáticamente el DCF para este tipo de empresas, ya que el FCF no tiene sentido contable en bancos. Te protege de cometer errores graves de valoración.'
+  },
+  {
+    id: 'sector-benchmark',
+    category: 'strategy',
+    title: '📈 Benchmark Sectorial',
+    short: 'Comparativa en tiempo real contra las medias estandarizadas de la industria.',
+    concept: 'Un PER de 15x es barato para el sector Software (media 25x) pero es caro para el sector Bancario (media 12x). La aplicación almacena internamente las medianas de PER y ROIC de todos los sectores de la economía.',
+    formula: '(Ratio Empresa - Media Sectorial) / Media Sectorial',
+    utility: 'Proporciona contexto al instante. Se inyecta directamente en el Informe Cualitativo indicando si la empresa cotiza con prima o descuento sectorial y si su rentabilidad supera a sus rivales.'
   }
 ];
 

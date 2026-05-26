@@ -92,9 +92,13 @@ def scan_opportunities(criteria: dict = None, max_stocks: int = 20, market: str 
                 if mos < criteria.get('min_mos', 20):
                     continue
 
-                # FCF Yield filter
+                # FCF Yield filter (FCF / Enterprise Value, not Market Cap)
                 fcf_yield = 0
-                if fcf_ttm and market_cap and market_cap > 0:
+                ev_val = analysis.get('market_cap', 0)  # Fallback to market cap
+                # Prefer enterprise value for FCF yield
+                if analysis.get('ev_fcf_actual') and analysis['ev_fcf_actual'] > 0:
+                    fcf_yield = (1.0 / analysis['ev_fcf_actual']) * 100  # 1/EV_FCF = FCF/EV
+                elif fcf_ttm and market_cap and market_cap > 0:
                     fcf_yield = (fcf_ttm / market_cap) * 100
                 if fcf_yield < criteria.get('min_fcf_yield', 5):
                     continue

@@ -12,6 +12,11 @@ from functools import wraps
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import mimetypes
+
+# Fix for Windows Registry messing up CSS MIME types (breaks iOS Safari)
+mimetypes.add_type('text/css', '.css')
+mimetypes.add_type('application/javascript', '.js')
 
 import jwt
 import database as db

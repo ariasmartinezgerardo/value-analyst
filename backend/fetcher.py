@@ -17,7 +17,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 import logging
-import requests
 import time
 
 logger = logging.getLogger(__name__)
@@ -119,10 +118,16 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         sector = info.get('sector', 'N/A')
         industry = info.get('industry', 'N/A')
         currency = info.get('currency', 'USD')
+        financial_currency = info.get('financialCurrency', currency)
         market_cap = info.get('marketCap', 0)
         shares_outstanding = info.get('sharesOutstanding', 0)
         current_price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
         enterprise_value = info.get('enterpriseValue', 0)
+
+        # New fields for archetype valuation models
+        book_value = info.get('bookValue', 0)  # Book value per share (for Financial archetype)
+        roe = info.get('returnOnEquity', 0)  # Return on equity (for Financial archetype)
+        dividend_rate = info.get('dividendRate', 0)  # Annual dividend per share (for DDM)
 
         # ─── EPS ─────────────────────────────────────────────────
         # Historical EPS from income statement
@@ -253,6 +258,14 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             if revenue_values:
                 break
 
+        # ─── Gross Profit (for margin analysis) ──────────────────
+        gross_profit_keys = ['Gross Profit', 'GrossProfit']
+        gross_profit_values = []
+        for key in gross_profit_keys:
+            gross_profit_values = _safe_get_all(income_stmt, key)
+            if gross_profit_values:
+                break
+
         # ─── Depreciation & Amortization ─────────────────────────
         da_keys = ['Depreciation And Amortization', 'DepreciationAndAmortization', 'Depreciation Amortization Depletion', 'Reconciled Depreciation']
         da_values = []
@@ -338,6 +351,7 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'sector': sector,
             'industry': industry,
             'currency': currency,
+            'financial_currency': financial_currency,
             'market_cap': market_cap,
             'shares_outstanding': shares_outstanding,
             'current_price': current_price,
@@ -366,6 +380,7 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             # Additional
             'fcf_yahoo_values': fcf_yahoo_values,
             'revenue_values': revenue_values,
+            'gross_profit_values': gross_profit_values,
             'net_income_values': net_income_values,
 
             # Ratios & Estimates
@@ -375,6 +390,11 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'analyst_target': analyst_target,
             'dividend_yield': dividend_yield,
             'payout_ratio': payout_ratio,
+
+            # Archetype model fields
+            'book_value': book_value,
+            'roe': roe,
+            'dividend_rate': dividend_rate,
 
             # Qualitative
             'held_percent_insiders': held_percent_insiders,
