@@ -331,6 +331,17 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
     """
     Classify a company into a valuation archetype based on its financial profile.
     Returns (archetype_id, archetype_label).
+
+    Classification priority:
+    1. Financial Services → 'financial'
+    2. REITs / Utilities → 'reit_utility'
+    3. EPS ≤ 0 + Revenue Growth > 15% → 'hypergrowth'
+    4. EPS ≤ 0 + Low Revenue Growth → 'speculative'
+    5. EPS > 0 + growth > 25% + rev_growth > 20% → 'hypergrowth'
+    6. ROIC > 25% (ultra-high moat, regardless of growth) → 'compounder'
+    7. ROIC > 15% + growth > 10% → 'compounder'
+    8. ROIC > 15% + active buybacks → 'compounder'
+    9. Everything else with EPS > 0 → 'classic_value'
     """
     sector = (data.get('sector') or '').lower()
     industry = (data.get('industry') or '').lower()
@@ -342,6 +353,16 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
     if len(clean_rev) >= 2:
         n = len(clean_rev) - 1
         rev_growth = (clean_rev[0] / clean_rev[-1]) ** (1 / n) - 1
+
+    # Buyback detection: shares outstanding declining over time
+    shares_history = data.get('shares_history', [])
+    has_buybacks = False
+    if len(shares_history) >= 2:
+        clean_shares = [s for s in shares_history if s is not None and s > 0]
+        if len(clean_shares) >= 2 and clean_shares[0] < clean_shares[-1]:
+            # Most recent < oldest → shrinking share count
+            shrink_pct = (clean_shares[-1] - clean_shares[0]) / clean_shares[-1]
+            has_buybacks = shrink_pct > 0.02  # At least 2% reduction over the period
 
     # 1. Financial Services (banks, insurance, asset management)
     if 'financial' in sector:
@@ -364,8 +385,17 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
     if growth_rate and growth_rate > 0.25 and rev_growth and rev_growth > 0.20:
         return 'hypergrowth', '🔥 Hipercrecimiento'
 
-    # 4. Compounder (profitable, high ROIC, moderate-high growth)
+    # 4. Compounder — multiple paths to qualify:
+    #    A) Ultra-high ROIC (>25%): massive moat regardless of growth (e.g. Apple, Visa)
+    if roic_avg and roic_avg > 25:
+        return 'compounder', '🚀 Compounder'
+
+    #    B) High ROIC (>15%) with moderate-high growth
     if roic_avg and roic_avg > 15 and growth_rate and growth_rate > 0.10:
+        return 'compounder', '🚀 Compounder'
+
+    #    C) High ROIC (>15%) with active buybacks (capital compounding via share reduction)
+    if roic_avg and roic_avg > 15 and has_buybacks:
         return 'compounder', '🚀 Compounder'
 
     # 5. Classic Value (everything else with positive earnings)
