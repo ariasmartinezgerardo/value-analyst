@@ -264,10 +264,14 @@ def calculate_roic(data: dict) -> dict:
         nopat = e * (1 - tax_rate)
 
         # Invested capital
-        eq = equity[i] if i < len(equity) else 0
+        eq = equity[i] if i < len(equity) else None
+        if eq is None:
+            roic_values.append(None)
+            continue
+
         d = debt[i] if i < len(debt) else 0
         c = cash[i] if i < len(cash) else 0
-        invested_capital = (eq or 0) + (d or 0) - (c or 0)
+        invested_capital = eq + (d or 0) - (c or 0)
 
         if invested_capital > 0:
             roic_values.append((nopat / invested_capital) * 100)
