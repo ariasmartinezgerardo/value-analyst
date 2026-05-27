@@ -385,17 +385,13 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
     if growth_rate and growth_rate > 0.25 and rev_growth and rev_growth > 0.20:
         return 'hypergrowth', '🔥 Hipercrecimiento'
 
-    # 4. Compounder — multiple paths to qualify:
+    # 4. Compounder — two paths to qualify:
     #    A) Ultra-high ROIC (>25%): massive moat regardless of growth (e.g. Apple, Visa)
     if roic_avg and roic_avg > 25:
         return 'compounder', '🚀 Compounder'
 
     #    B) High ROIC (>15%) with moderate-high growth
     if roic_avg and roic_avg > 15 and growth_rate and growth_rate > 0.10:
-        return 'compounder', '🚀 Compounder'
-
-    #    C) High ROIC (>15%) with active buybacks (capital compounding via share reduction)
-    if roic_avg and roic_avg > 15 and has_buybacks:
         return 'compounder', '🚀 Compounder'
 
     # 5. Classic Value (everything else with positive earnings)

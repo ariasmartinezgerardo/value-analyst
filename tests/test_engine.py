@@ -300,13 +300,13 @@ class TestArchetypeDetection(unittest.TestCase):
         arch_id, _ = detect_archetype(data, roic_avg=65, growth_rate=0.03, eps_ttm=8.0, fcf_ttm=100e9)
         self.assertEqual(arch_id, 'compounder')
 
-    def test_compounder_buybacks(self):
-        """Company with ROIC > 15% and active buybacks → compounder even with low growth."""
+    def test_buybacks_without_high_roic_is_classic_value(self):
+        """ROIC 18% + buybacks but no high growth → classic_value (not compounder)."""
         data = {'sector': 'Consumer Defensive', 'industry': 'Tobacco',
                 'revenue_values': [30e9, 29e9, 28e9],
                 'shares_history': [900e6, 950e6, 1000e6]}  # 10% share reduction
         arch_id, _ = detect_archetype(data, roic_avg=18, growth_rate=0.04, eps_ttm=6.0, fcf_ttm=8e9)
-        self.assertEqual(arch_id, 'compounder')
+        self.assertEqual(arch_id, 'classic_value')
 
     def test_classic_value_moderate_roic_no_buybacks(self):
         """True classic value: moderate ROIC, low growth, no buybacks (e.g. Coca-Cola)."""
