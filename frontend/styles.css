@@ -1471,6 +1471,13 @@ button.filter-chip.active:hover {
   filter: drop-shadow(0 0 12px rgba(71, 85, 105, 0.6));
 }
 
+.responsive-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-sm);
+  margin: var(--space-md) 0;
+}
+
 /* ─── Wiki Page Styles (NOVEDAD) ────────────────────────────────── */
 .wiki-card {
   cursor: pointer;

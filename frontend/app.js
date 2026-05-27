@@ -504,7 +504,7 @@ function renderCompanyDetail(d) {
       <div class="semaforo-card__icon">${getSemaforoEmoji(d.estado_semaforo)}</div>
       <div class="semaforo-card__content">
         <div class="semaforo-card__status">${d.estado_semaforo || 'SIN CLASIFICAR'}</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); margin: var(--space-md) 0;">
+        <div class="responsive-metrics-grid">
           <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
             <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Fundamentales (DCF)</div>
             <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_absoluto >= 0 ? 'var(--color-success)' : 'var(--color-danger)'};">
@@ -525,7 +525,7 @@ function renderCompanyDetail(d) {
     </div>
 
     <!-- Phase 3: Margins and Debt Ratios -->
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-md); margin-bottom: var(--space-md);">
+    <div class="responsive-metrics-grid">
       <div class="card">
         <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">📊 RENTABILIDAD Y MÁRGENES</div>
         <div class="info-row">
