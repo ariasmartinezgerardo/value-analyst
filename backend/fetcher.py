@@ -336,6 +336,18 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         compensation_risk = info.get('compensationRisk')
         business_summary = info.get('longBusinessSummary', '')
 
+        # ─── Stock Based Compensation (for FCF adjustment) ─────
+        sbc_keys = ['Stock Based Compensation', 'StockBasedCompensation']
+        sbc_values = []
+        for key in sbc_keys:
+            sbc_values = _safe_get_all(cash_flow, key)
+            if sbc_values:
+                break
+        sbc_values = [abs(v) if v else 0 for v in sbc_values]
+
+        # ─── Beta (market risk) ──────────────────────────────────
+        beta = info.get('beta', None)
+
         # Historical shares outstanding to detect buybacks
         shares_history = []
         shares_keys = ['Ordinary Shares Number', 'Common Stock Shares Outstanding', 'Share Capital']
@@ -395,6 +407,10 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'book_value': book_value,
             'roe': roe,
             'dividend_rate': dividend_rate,
+
+            # SBC & Beta
+            'sbc_values': sbc_values,
+            'beta': beta,
 
             # Qualitative
             'held_percent_insiders': held_percent_insiders,

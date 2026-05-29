@@ -239,8 +239,11 @@ def get_portfolio(current_user):
             'margen_seguridad': latest.get('margen_seguridad') if latest else None,
             'calidad': latest.get('calidad', '') if latest else '',
             'roic_actual': latest.get('roic_actual') if latest else None,
+            'roic_current': latest.get('roic_actual') if latest else None,
             'per_actual': latest.get('per_actual') if latest else None,
             'estado_semaforo': latest.get('estado_semaforo', '') if latest else '',
+            'archetype_label': latest.get('archetype_label', '') if latest else '',
+            'sector': latest.get('sector', '') if latest else '',
             'last_updated': latest.get('fecha_consulta', '') if latest else '',
         })
     return jsonify({'portfolio': enriched})
@@ -299,33 +302,7 @@ def get_company_detail(current_user, ticker):
     analysis['thesis'] = generate_investment_thesis(analysis)
 
     # Save to history (cumulative, user-isolated)
-    db.save_analysis(current_user['id'], {
-        'ticker': analysis.get('ticker'),
-        'empresa': analysis.get('empresa'),
-        'sector': analysis.get('sector'),
-        'precio_mercado': analysis.get('current_price'),
-        'eps_hist': analysis.get('eps_hist_avg'),
-        'eps_actual': analysis.get('eps_ttm'),
-        'eps_tendencia': analysis.get('eps_trend'),
-        'fcf_hist': analysis.get('fcf_real_hist_avg'),
-        'fcf_actual': analysis.get('fcf_real_ttm'),
-        'fcf_tendencia': analysis.get('fcf_trend'),
-        'roic_hist': analysis.get('roic_hist_avg'),
-        'roic_actual': analysis.get('roic_current'),
-        'roic_tendencia': analysis.get('roic_trend'),
-        'per_actual': analysis.get('per_actual'),
-        'ev_fcf_actual': analysis.get('ev_fcf_actual'),
-        'valor_intrinseco_graham': analysis.get('graham_value'),
-        'valor_intrinseco_dcf': analysis.get('dcf_value'),
-        'margen_seguridad': analysis.get('margen_seguridad'),
-        'ms_absoluto': analysis.get('ms_absoluto'),
-        'ms_relativo': analysis.get('ms_relativo'),
-        'estado_semaforo': analysis.get('estado_semaforo'),
-        'alerta_compra': analysis.get('alerta_compra'),
-        'calidad': analysis.get('calidad'),
-        'non_gaap_flag': analysis.get('non_gaap_flag'),
-        'raw_data': raw_data
-    })
+    db.save_analysis(current_user['id'], analysis)
 
     return jsonify(analysis)
 
@@ -355,33 +332,7 @@ def update_all(current_user):
             return {'ticker': ticker, 'error': analysis['error']}
 
         # Save to history (user-isolated)
-        db.save_analysis(current_user['id'], {
-            'ticker': analysis.get('ticker'),
-            'empresa': analysis.get('empresa'),
-            'sector': analysis.get('sector'),
-            'precio_mercado': analysis.get('current_price'),
-            'eps_hist': analysis.get('eps_hist_avg'),
-            'eps_actual': analysis.get('eps_ttm'),
-            'eps_tendencia': analysis.get('eps_trend'),
-            'fcf_hist': analysis.get('fcf_real_hist_avg'),
-            'fcf_actual': analysis.get('fcf_real_ttm'),
-            'fcf_tendencia': analysis.get('fcf_trend'),
-            'roic_hist': analysis.get('roic_hist_avg'),
-            'roic_actual': analysis.get('roic_current'),
-            'roic_tendencia': analysis.get('roic_trend'),
-            'per_actual': analysis.get('per_actual'),
-            'ev_fcf_actual': analysis.get('ev_fcf_actual'),
-            'valor_intrinseco_graham': analysis.get('graham_value'),
-            'valor_intrinseco_dcf': analysis.get('dcf_value'),
-            'margen_seguridad': analysis.get('margen_seguridad'),
-            'ms_absoluto': analysis.get('ms_absoluto'),
-            'ms_relativo': analysis.get('ms_relativo'),
-            'estado_semaforo': analysis.get('estado_semaforo'),
-            'alerta_compra': analysis.get('alerta_compra'),
-            'calidad': analysis.get('calidad'),
-            'non_gaap_flag': analysis.get('non_gaap_flag'),
-            'raw_data': raw_data
-        })
+        db.save_analysis(current_user['id'], analysis)
 
         return {
             'ticker': analysis.get('ticker'),
