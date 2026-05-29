@@ -166,67 +166,81 @@ def _trend(values):
     return '→'
 
 
+# Growth rate caps by archetype (applied after detection in run_full_analysis)
+GROWTH_CAPS = {
+    'classic_value': 0.15,
+    'compounder': 0.20,
+    'hypergrowth': 0.30,
+    'financial': 0.10,
+    'reit_utility': 0.08,
+    'speculative': 0.15,
+}
+
+
 def _growth_rate(values):
     """
     Estimate compound annual growth rate from values (most recent first).
+    Returns RAW CAGR (uncapped), or None if insufficient data.
+    The cap is applied per-archetype in run_full_analysis.
     """
     clean = [v for v in values if v is not None and v > 0]
     if len(clean) < 2:
-        return 0.05  # default 5% if insufficient data
+        return None  # insufficient data — caller decides default
     n = len(clean) - 1
     if clean[-1] <= 0 or clean[0] <= 0:
-        return 0.05
+        return None
     cagr = (clean[0] / clean[-1]) ** (1 / n) - 1
-    return max(min(cagr, 0.25), -0.10)  # clamp between -10% and 25%
+    return max(min(cagr, 1.0), -0.10)  # floor at -10%, raw cap at 100%
 
 
 # ─── FCF REAL ─────────────────────────────────────────────────────
 
 def calculate_fcf_real(data: dict) -> dict:
     """
-    Calculate Real Free Cash Flow (GAAP-only):
-    FCF = EBITDA - CAPEX - Interest - Taxes - ΔWorkingCapital
+    Calculate Real Free Cash Flow (GAAP-only), adjusted for SBC:
+    FCF = FCF_Yahoo (Operating Cash Flow - Capex) - SBC
 
-    Returns dict with historical and TTM FCF values.
+    SBC (Stock Based Compensation) is deducted because it dilutes shareholders
+    even though it's a non-cash expense. This is critical for tech companies.
+
+    Returns dict with historical FCF values (adjusted) and pre-SBC values.
     """
-    ebitda = data.get('ebitda_values', [])
-    capex = data.get('capex_values', [])
-    interest = data.get('interest_values', [])
-    taxes = data.get('tax_values', [])
-    wc_changes = data.get('wc_values', [])
-
-    min_len = min(len(ebitda), len(capex)) if ebitda and capex else 0
-
+    fcf_yahoo = data.get('fcf_yahoo_values', [])
+    sbc = data.get('sbc_values', [])
+    
     fcf_real_values = []
+    fcf_pre_sbc_values = []
+    sbc_annual = []
+    
+    min_len = min(len(fcf_yahoo), len(sbc)) if fcf_yahoo and sbc else 0
+    
     for i in range(min_len):
-        e = ebitda[i] or 0
-        c = capex[i] or 0
-        intr = interest[i] if i < len(interest) else 0
-        tax = taxes[i] if i < len(taxes) else 0
-        wc = wc_changes[i] if i < len(wc_changes) else 0
-
-        # FCF = EBITDA - |CapEx| - |Interest| - |Taxes| + ΔWC
-        # Note: capex already abs()'d in fetcher, but we abs() again for safety
-        fcf = e - abs(c) - abs(intr or 0) - abs(tax or 0) + (wc or 0)
-        fcf_real_values.append(fcf)
-
-    # TTM calculation
-    ebitda_ttm = data.get('ebitda_ttm')
+        f = fcf_yahoo[i] or 0
+        s = sbc[i] or 0
+        fcf_pre_sbc_values.append(f)
+        sbc_annual.append(abs(s))
+        fcf_real_values.append(f - abs(s))
+        
+    fcf_ttm_pre_sbc = None
     fcf_ttm = None
-    if ebitda_ttm and capex:
-        capex_latest = capex[0] if capex else 0
-        interest_latest = interest[0] if interest else 0
-        tax_latest = taxes[0] if taxes else 0
-        wc_latest = wc_changes[0] if wc_changes else 0
-        fcf_ttm = ebitda_ttm - abs(capex_latest) - abs(interest_latest or 0) - abs(tax_latest or 0) + (wc_latest or 0)
-
+    
+    # We use the most recent annual FCF as a proxy for TTM if specific TTM isn't strictly available,
+    # as Yahoo's FCF values are typically annual.
+    if fcf_yahoo and fcf_yahoo[0] is not None:
+        fcf_ttm_pre_sbc = fcf_yahoo[0]
+        if sbc and sbc[0] is not None:
+            fcf_ttm = fcf_ttm_pre_sbc - abs(sbc[0])
+            
     hist_avg = _avg(fcf_real_values[1:]) if len(fcf_real_values) > 1 else _avg(fcf_real_values)
-
+    
     return {
         'fcf_real_values': fcf_real_values,
+        'fcf_pre_sbc_values': fcf_pre_sbc_values,
+        'sbc_values': sbc_annual,
         'fcf_real_ttm': fcf_ttm,
+        'fcf_ttm_pre_sbc': fcf_ttm_pre_sbc,
         'fcf_real_hist_avg': hist_avg,
-        'fcf_trend': _trend(fcf_real_values),
+        'fcf_trend': _trend(fcf_real_values)
     }
 
 
@@ -288,6 +302,82 @@ def calculate_roic(data: dict) -> dict:
     }
 
 
+# ─── GROWTH INVESTING METRICS ────────────────────────────────────
+
+def calculate_growth_metrics(data: dict, growth_rate: float,
+                             rev_growth: float,
+                             fcf_margin: float,
+                             per_actual: float,
+                             per_forward: float,
+                             ev: float,
+                             revenue_current: float) -> dict:
+    """
+    Calculate Growth Investing metrics:
+    - PEG Ratio (Peter Lynch GARP): PER / EPS Growth %
+    - Rule of 40 (SaaS standard): Revenue Growth % + FCF Margin %
+    - EV/Revenue Forward: Enterprise Value / Projected Revenue (3y)
+    """
+    result = {
+        'peg_trailing': None,
+        'peg_forward': None,
+        'peg_signal': None,         # 'undervalued', 'fair', 'overvalued'
+        'rule_of_40': None,
+        'rule_of_40_signal': None,  # 'premium', 'acceptable', 'weak'
+        'ev_revenue_current': None,
+        'ev_revenue_forward_3y': None,
+        'has_growth_metrics': False,
+    }
+
+    # ─── PEG Ratio (Trailing) ────────────────────────────────
+    # PEG = PE / EPS Growth Rate (as %)
+    growth_pct = (growth_rate or 0) * 100  # Convert 0.18 → 18
+    if per_actual and per_actual > 0 and growth_pct > 0:
+        result['peg_trailing'] = round(per_actual / growth_pct, 2)
+        result['has_growth_metrics'] = True
+
+    # ─── PEG Ratio (Forward) ─────────────────────────────────
+    if per_forward and per_forward > 0 and growth_pct > 0:
+        result['peg_forward'] = round(per_forward / growth_pct, 2)
+        result['has_growth_metrics'] = True
+
+    # ─── PEG Signal (use the best available) ─────────────────
+    peg = result['peg_forward'] or result['peg_trailing']
+    if peg is not None:
+        if peg < 1.0:
+            result['peg_signal'] = 'undervalued'
+        elif peg <= 2.0:
+            result['peg_signal'] = 'fair'
+        else:
+            result['peg_signal'] = 'overvalued'
+
+    # ─── Rule of 40 ──────────────────────────────────────────
+    rev_growth_pct = (rev_growth or 0) * 100  # 0.25 → 25
+    fcf_margin_pct = (fcf_margin or 0) * 100  # 0.15 → 15
+    if rev_growth_pct != 0 or fcf_margin_pct != 0:
+        rule40 = round(rev_growth_pct + fcf_margin_pct, 1)
+        result['rule_of_40'] = rule40
+        result['has_growth_metrics'] = True
+
+        if rule40 >= 40:
+            result['rule_of_40_signal'] = 'premium'
+        elif rule40 >= 20:
+            result['rule_of_40_signal'] = 'acceptable'
+        else:
+            result['rule_of_40_signal'] = 'weak'
+
+    # ─── EV/Revenue ──────────────────────────────────────────
+    if ev and ev > 0 and revenue_current and revenue_current > 0:
+        result['ev_revenue_current'] = round(ev / revenue_current, 2)
+        result['has_growth_metrics'] = True
+
+        # Forward 3-year projection
+        if rev_growth and rev_growth > 0:
+            projected_rev_3y = revenue_current * ((1 + rev_growth) ** 3)
+            result['ev_revenue_forward_3y'] = round(ev / projected_rev_3y, 2)
+
+    return result
+
+
 # ─── NON-GAAP DETECTION ──────────────────────────────────────────
 
 def check_non_gaap(data: dict) -> dict:
@@ -336,16 +426,15 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
     Classify a company into a valuation archetype based on its financial profile.
     Returns (archetype_id, archetype_label).
 
-    Classification priority:
+    REVISED Classification priority (rentabilidad primero, crecimiento después):
     1. Financial Services → 'financial'
     2. REITs / Utilities → 'reit_utility'
     3. EPS ≤ 0 + Revenue Growth > 15% → 'hypergrowth'
     4. EPS ≤ 0 + Low Revenue Growth → 'speculative'
-    5. EPS > 0 + growth > 25% + rev_growth > 20% → 'hypergrowth'
-    6. ROIC > 25% (ultra-high moat, regardless of growth) → 'compounder'
-    7. ROIC > 15% + growth > 10% → 'compounder'
-    8. ROIC > 15% + active buybacks → 'compounder'
-    9. Everything else with EPS > 0 → 'classic_value'
+    5. EPS > 0 + ROIC > 20% → 'compounder' (ALWAYS, regardless of growth)
+    6. EPS > 0 + ROIC > 15% + growth > 10% → 'compounder'
+    7. EPS > 0 + growth > 25% + rev_growth > 20% + ROIC ≤ 20% → 'hypergrowth'
+    8. Everything else with EPS > 0 → 'classic_value'
     """
     sector = (data.get('sector') or '').lower()
     industry = (data.get('industry') or '').lower()
@@ -358,16 +447,6 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
         n = len(clean_rev) - 1
         rev_growth = (clean_rev[0] / clean_rev[-1]) ** (1 / n) - 1
 
-    # Buyback detection: shares outstanding declining over time
-    shares_history = data.get('shares_history', [])
-    has_buybacks = False
-    if len(shares_history) >= 2:
-        clean_shares = [s for s in shares_history if s is not None and s > 0]
-        if len(clean_shares) >= 2 and clean_shares[0] < clean_shares[-1]:
-            # Most recent < oldest → shrinking share count
-            shrink_pct = (clean_shares[-1] - clean_shares[0]) / clean_shares[-1]
-            has_buybacks = shrink_pct > 0.02  # At least 2% reduction over the period
-
     # 1. Financial Services (banks, insurance, asset management)
     if 'financial' in sector:
         return 'financial', '🏦 Financiero'
@@ -378,7 +457,7 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
     if 'utilities' in sector:
         return 'reit_utility', '⚡ Utility / Suministros'
 
-    # 3. Hypergrowth (negative EPS with strong revenue growth)
+    # 3. No earnings → Hypergrowth or Speculative
     if (eps_ttm is None or eps_ttm <= 0):
         if rev_growth and rev_growth > 0.15:
             return 'hypergrowth', '🔥 Hipercrecimiento'
@@ -386,19 +465,23 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
             return 'speculative', '⚠️ Especulativo (Sin Beneficios)'
 
     # From here, EPS > 0 is guaranteed
-    if growth_rate and growth_rate > 0.25 and rev_growth and rev_growth > 0.20:
-        return 'hypergrowth', '🔥 Hipercrecimiento'
 
-    # 4. Compounder — two paths to qualify:
-    #    A) Ultra-high ROIC (>25%): massive moat regardless of growth (e.g. Apple, Visa)
-    if roic_avg and roic_avg > 25:
+    # 4. COMPOUNDER — rentabilidad primero (ROIC > 20% = always compounder)
+    #    This ensures NVDA, AAPL, AVGO etc. are valued with FCF-based DCF,
+    #    not revenue-based DCF designed for pre-profit startups.
+    if roic_avg and roic_avg > 20:
         return 'compounder', '🚀 Compounder'
 
-    #    B) High ROIC (>15%) with moderate-high growth
+    # 5. COMPOUNDER — moderate ROIC + growth
     if roic_avg and roic_avg > 15 and growth_rate and growth_rate > 0.10:
         return 'compounder', '🚀 Compounder'
 
-    # 5. Classic Value (everything else with positive earnings)
+    # 6. HYPERGROWTH — only for profitable companies with low ROIC but explosive growth
+    #    These are companies growing fast but haven't yet built a durable moat
+    if growth_rate and growth_rate > 0.25 and rev_growth and rev_growth > 0.20:
+        return 'hypergrowth', '🔥 Hipercrecimiento'
+
+    # 7. Classic Value (everything else with positive earnings)
     return 'classic_value', '🏛️ Value Clásico'
 
 
@@ -613,6 +696,78 @@ def ddm_valuation(dividend_per_share: float, growth_rate: float,
 
     d1 = dividend_per_share * (1 + growth_rate)
     return max(d1 / (discount_rate - growth_rate), 0)
+
+# ─── REVERSE DCF (IMPLIED GROWTH) ────────────────────────────────
+
+def reverse_dcf(current_price: float, fcf_current: float, shares: int,
+                total_debt: float = 0, cash: float = 0,
+                wacc: float = 0.10, years: int = 10) -> float:
+    """
+    Calculate the growth rate implied by the current market price.
+    Uses binary search to find the growth rate that produces the market price.
+    
+    Returns: implied annual growth rate (e.g. 0.18 = 18%)
+    """
+    if not fcf_current or fcf_current <= 0 or not shares or shares <= 0 or not current_price:
+        return None
+
+    low, high = -0.10, 0.80  # search range: -10% to 80%
+    target_price = current_price
+    
+    for _ in range(50):  # max iterations for binary search
+        mid = (low + high) / 2
+        computed = dcf_valuation(fcf_current, mid, shares, total_debt, cash, wacc, years)
+        if computed is None or computed <= 0:
+            low = mid
+            continue
+        if abs(computed - target_price) / target_price < 0.005:  # 0.5% tolerance
+            return round(mid, 4)
+        if computed < target_price:
+            low = mid
+        else:
+            high = mid
+    
+    return round((low + high) / 2, 4)
+
+
+# ─── SENSITIVITY TABLE ───────────────────────────────────────────
+
+def sensitivity_table(fcf_current: float, shares: int,
+                      total_debt: float = 0, cash: float = 0,
+                      base_wacc: float = 0.10, base_growth: float = 0.10,
+                      archetype_id: str = 'classic_value') -> dict:
+    """
+    Generate a 3×3 sensitivity table varying WACC and growth rate.
+    Returns dict with 'wacc_values', 'growth_values', and 'matrix' (3×3 list).
+    """
+    if not fcf_current or fcf_current <= 0 or not shares or shares <= 0:
+        return None
+
+    wacc_offsets = [-0.02, 0, 0.02]
+    growth_offsets = [-0.03, 0, 0.03]
+    
+    wacc_values = [round(base_wacc + o, 3) for o in wacc_offsets]
+    growth_values = [round(max(base_growth + o, 0.01), 3) for o in growth_offsets]
+    
+    # Use appropriate DCF model
+    use_multiphase = archetype_id in ('compounder', 'hypergrowth')
+    
+    matrix = []
+    for w in wacc_values:
+        row = []
+        for g in growth_values:
+            if use_multiphase:
+                val = multiphase_dcf_valuation(fcf_current, g, shares, total_debt, cash, w)
+            else:
+                val = dcf_valuation(fcf_current, g, shares, total_debt, cash, w)
+            row.append(round(val, 2) if val else 0)
+        matrix.append(row)
+    
+    return {
+        'wacc_values': wacc_values,
+        'growth_values': growth_values,
+        'matrix': matrix
+    }
 
 
 # ─── MARGIN OF SAFETY ────────────────────────────────────────────
@@ -884,20 +1039,31 @@ def run_full_analysis(data: dict) -> dict:
     rev_growth = _growth_rate(revenue_values) if revenue_values else None
 
     growth = data.get('growth_estimate')
+    growth_source = 'default'  # Track where the estimate comes from
+
+    # B1 FIX: Yahoo earningsGrowth can return extreme values (e.g. 7.56 = 756%).
+    # Any value > 100% is likely a cyclical recovery spike, not sustainable growth.
+    if growth and growth > 1.0:
+        logger.info(f"{ticker}: growth_estimate {growth:.2%} is extreme (>100%), discarding")
+        growth = None
+
     if growth and growth > 0:
         base_growth_rate = growth
+        growth_source = 'analyst'
     else:
-        # Estimate from EPS history
-        base_growth_rate = eps_growth if eps_growth else 0.05
+        # Estimate from EPS history (B6 FIX: _growth_rate now returns None instead of 0.05)
+        if eps_growth is not None:
+            base_growth_rate = eps_growth
+            growth_source = 'eps_cagr'
+        else:
+            base_growth_rate = 0.05
+            growth_source = 'default'
     
     # Haircut: if EPS growth > 1.5x Revenue growth, it's likely unsustainable (e.g. buybacks, margin expansion).
-    # We apply this sanity check to prevent overvaluation, except for hypergrowth which is evaluated on revenue anyway.
     if rev_growth and rev_growth > 0 and base_growth_rate > (rev_growth * 1.5):
         growth_rate = rev_growth * 1.5
     else:
         growth_rate = base_growth_rate
-        
-    growth_rate_pct = growth_rate * 100  # For Graham formula
 
     # ─── Detect Archetype ────────────────────────────────────
     archetype_id, archetype_label = detect_archetype(
@@ -907,6 +1073,28 @@ def run_full_analysis(data: dict) -> dict:
         eps_ttm=eps_ttm,
         fcf_ttm=fcf_result.get('fcf_real_ttm'),
     )
+
+    # ─── Apply per-archetype growth cap ──────────────────────
+    growth_cap = GROWTH_CAPS.get(archetype_id, 0.25)
+    growth_rate = max(min(growth_rate, growth_cap), -0.10)
+    growth_rate_pct = growth_rate * 100  # For Graham formula
+
+    # ─── Determine Methodology ────────────────────────────────
+    if archetype_id in ('classic_value', 'compounder'):
+        methodology = 'value'
+        methodology_label = '📜 Value Investing'
+    elif archetype_id == 'hypergrowth':
+        methodology = 'growth'
+        methodology_label = '🚀 Growth Investing'
+    elif archetype_id == 'financial':
+        methodology = 'book_value'
+        methodology_label = '🏦 Book Value'
+    elif archetype_id == 'reit_utility':
+        methodology = 'dividend'
+        methodology_label = '🏠 Dividendos'
+    else:  # speculative
+        methodology = 'speculative'
+        methodology_label = '⚠️ Especulativo'
 
     # ─── Variable WACC ───────────────────────────────────────
     wacc = get_wacc(sector, market_cap)
@@ -924,13 +1112,31 @@ def run_full_analysis(data: dict) -> dict:
                 multiplier = candidate_mult
 
     # ─── Get FCF for DCF ─────────────────────────────────────
+    fcf_real_values = fcf_result.get('fcf_real_values', [])
     fcf_for_dcf = fcf_result.get('fcf_real_ttm') or (
-        fcf_result['fcf_real_values'][0] if fcf_result.get('fcf_real_values') else None
+        fcf_real_values[0] if fcf_real_values else None
     )
     # Fallback to Yahoo's FCF
     if not fcf_for_dcf or fcf_for_dcf <= 0:
         yahoo_fcf = data.get('fcf_yahoo_values', [])
         fcf_for_dcf = yahoo_fcf[0] if yahoo_fcf else 0
+
+    # CYCLICAL FIX: If FCF is very volatile (some years negative, some positive),
+    # the most recent FCF may be unreliable. Use the average of positive years instead.
+    # This normalizes cyclical businesses like MU, commodity producers, etc.
+    positive_fcfs = [v for v in fcf_real_values if v is not None and v > 0]
+    if len(fcf_real_values) >= 3 and positive_fcfs:
+        negative_count = sum(1 for v in fcf_real_values if v is not None and v < 0)
+        if negative_count >= 2:
+            # High volatility: at least 2 negative FCF years out of 3+
+            normalized_fcf = sum(positive_fcfs) / len(positive_fcfs)
+            logger.info(f"{ticker}: Cyclical FCF detected ({negative_count} negative years). "
+                        f"Using normalized FCF {normalized_fcf/1e9:.1f}B instead of TTM {(fcf_for_dcf or 0)/1e9:.1f}B")
+            fcf_for_dcf = normalized_fcf
+            # With normalized FCF, a negative growth rate makes no sense — use conservative default
+            if growth_rate < 0:
+                growth_rate = 0.03  # 3% conservative growth for normalized earnings
+                growth_source = 'normalized'
 
     # Get most recent debt and cash (financial statement currency)
     debt_list = data.get('total_debt_values', [])
@@ -949,13 +1155,37 @@ def run_full_analysis(data: dict) -> dict:
     valuation_models_used = []
 
     if archetype_id == 'classic_value':
-        # Classic Value: Graham + Standard DCF
-        graham_value = graham_valuation(eps_ttm, growth_rate_pct)
+        # Classic Value: Graham (only if sector PE < 20x) + Standard DCF
+        sector_lower = (sector or '').lower()
+        sector_pe = SECTOR_BENCHMARKS.get(sector_lower, {}).get('pe', 15)
+        if sector_pe < 20:
+            graham_value = graham_valuation(eps_ttm, growth_rate_pct)
         dcf_value = dcf_valuation(
             fcf_current=fcf_for_dcf, growth_rate=growth_rate,
             shares=shares, total_debt=current_debt, cash=current_cash, wacc=wacc
         )
-        valuation_models_used = ['Graham', 'DCF']
+
+        # EPV FALLBACK: If FCF is very low relative to Net Income (heavy CAPEX companies
+        # like MU, capital-intensive industrials), the DCF is unreliable.
+        # Use Earnings Power Value = Normalized Net Income / WACC as alternative.
+        net_income_vals = data.get('net_income_values', [])
+        positive_ni = [v for v in net_income_vals if v is not None and v > 0]
+        if positive_ni and fcf_for_dcf and fcf_for_dcf > 0:
+            avg_net_income = sum(positive_ni) / len(positive_ni)
+            fcf_to_ni_ratio = fcf_for_dcf / avg_net_income if avg_net_income > 0 else 1.0
+            if fcf_to_ni_ratio < 0.30:
+                # FCF is less than 30% of average Net Income → heavy CAPEX, DCF is misleading
+                epv = (avg_net_income / wacc + (current_cash or 0) - (current_debt or 0)) / shares if shares else 0
+                epv = max(epv, 0)
+                logger.info(f"{ticker}: FCF/NI ratio {fcf_to_ni_ratio:.1%} is very low (heavy CAPEX). "
+                            f"Adding EPV fallback: ${epv:.2f} (DCF was ${dcf_value:.2f})")
+                alt_value = epv / multiplier if multiplier and abs(multiplier) > 0.001 else epv
+                alt_model_name = 'EPV (Earnings Power)'
+                valuation_models_used = ['Graham', 'DCF', 'EPV']
+            else:
+                valuation_models_used = ['Graham', 'DCF']
+        else:
+            valuation_models_used = ['Graham', 'DCF']
 
     elif archetype_id == 'compounder':
         # Compounder: Multi-Phase DCF
@@ -1003,9 +1233,11 @@ def run_full_analysis(data: dict) -> dict:
 
     elif archetype_id == 'reit_utility':
         # REIT/Utility: DDM + DCF
+        # B4 FIX: Skip DDM if dividend yield is suspiciously high (data error)
+        raw_div_yield = data.get('dividend_yield', 0) or 0
         dividend_rate = data.get('dividend_rate', 0) or 0
         div_growth = min(growth_rate, 0.05) if growth_rate > 0 else 0.02
-        if dividend_rate and dividend_rate > 0:
+        if dividend_rate and dividend_rate > 0 and raw_div_yield <= 0.20:
             alt_value = ddm_valuation(dividend_rate, div_growth, discount_rate=wacc)
             alt_model_name = 'Div. Discount (DDM)'
         # DCF as secondary
@@ -1032,11 +1264,18 @@ def run_full_analysis(data: dict) -> dict:
         alt_value = alt_value / multiplier if alt_value else 0
 
     # ─── Best Intrinsic Value (smart selection) ──────────────
-    # Use only the models that produced valid (> 0) results
+    # D2 FIX: Using min() was ultra-conservative and let broken models (e.g. low-FCF DCF)
+    # dominate. Now we use median for 3+ models, average for 2 models.
     valid_values = [v for v in [graham_value, dcf_value, alt_value] if v and v > 0]
-    if valid_values:
-        # Conservative: take the lower of the valid values
-        best_intrinsic = min(valid_values)
+    if len(valid_values) >= 3:
+        # Median: robust against one outlier model
+        valid_values.sort()
+        best_intrinsic = valid_values[len(valid_values) // 2]
+    elif len(valid_values) == 2:
+        # Average of two models
+        best_intrinsic = sum(valid_values) / 2
+    elif len(valid_values) == 1:
+        best_intrinsic = valid_values[0]
     else:
         best_intrinsic = 0
 
@@ -1044,12 +1283,63 @@ def run_full_analysis(data: dict) -> dict:
     mos = margin_of_safety(best_intrinsic, current_price)
     ms_abs = mos
 
+    # ─── Reverse DCF (Implied Growth) ────────────────────────
+    # Convert FCF to trading currency for the reverse DCF calculation
+    fcf_for_reverse = fcf_for_dcf / multiplier if fcf_for_dcf and multiplier and abs(multiplier) > 0.001 else fcf_for_dcf
+    debt_for_reverse = current_debt / multiplier if current_debt and multiplier and abs(multiplier) > 0.001 else current_debt
+    cash_for_reverse = current_cash / multiplier if current_cash and multiplier and abs(multiplier) > 0.001 else current_cash
+    implied_growth = reverse_dcf(
+        current_price=current_price,
+        fcf_current=fcf_for_reverse,
+        shares=shares,
+        total_debt=debt_for_reverse or 0,
+        cash=cash_for_reverse or 0,
+        wacc=wacc,
+    ) if methodology != 'speculative' else None
+
+    # ─── Sensitivity Table (3×3) ─────────────────────────────
+    sens_table = sensitivity_table(
+        fcf_current=fcf_for_reverse,
+        shares=shares,
+        total_debt=debt_for_reverse or 0,
+        cash=cash_for_reverse or 0,
+        base_wacc=wacc,
+        base_growth=growth_rate,
+        archetype_id=archetype_id,
+    ) if methodology not in ('speculative', 'growth') and fcf_for_dcf and fcf_for_dcf > 0 else None
+
     # ─── PER & EV/FCF (Actuals) ──────────────────────────────
     per_actual = data.get('per_trailing')
     ev_fcf = None
+    ev_fcf_pre_sbc = None  # D3 FIX: comparable with market screeners
     ev = data.get('enterprise_value', 0)
+    yahoo_fcf_list = data.get('fcf_yahoo_values', [])
+    yahoo_fcf_latest = yahoo_fcf_list[0] if yahoo_fcf_list else None
     if ev and fcf_for_dcf and fcf_for_dcf > 0:
         ev_fcf = ev / fcf_for_dcf
+    if ev and yahoo_fcf_latest and yahoo_fcf_latest > 0:
+        ev_fcf_pre_sbc = ev / yahoo_fcf_latest
+
+    # ─── Growth Investing Metrics ─────────────────────────────
+    latest_rev = revenue_values[0] if revenue_values else 0
+    fcf_margin_for_growth = 0
+    if latest_rev and latest_rev > 0 and fcf_for_dcf:
+        fcf_margin_for_growth = fcf_for_dcf / latest_rev
+
+    growth_metrics = calculate_growth_metrics(
+        data=data,
+        growth_rate=growth_rate,
+        rev_growth=rev_growth,
+        fcf_margin=fcf_margin_for_growth,
+        per_actual=per_actual,
+        per_forward=data.get('per_forward'),
+        ev=ev,
+        revenue_current=latest_rev,
+    )
+
+    # Only keep growth metrics for value/growth methodologies
+    if methodology not in ('value', 'growth'):
+        growth_metrics['has_growth_metrics'] = False
 
     # ─── Historical Multiples & MS Relativo ──────────────────
     hist_prices = data.get('historical_prices', [])
@@ -1121,18 +1411,47 @@ def run_full_analysis(data: dict) -> dict:
     # ─── Traffic Light (Semáforo) Lógica ─────────────────────
     non_gaap_flag = non_gaap.get('non_gaap_flag', '')
 
+    estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
+    alerta_compra = 0
+
     if non_gaap_flag == '🚫 No Elegible':
         estado_semaforo = '🚫 NO ELEGIBLE'
         alerta_compra = 0
-    elif ms_abs > 15.0 and ms_rel > 10.0:
-        estado_semaforo = '🟢 STRONG BUY'
-        alerta_compra = 1
-    elif ms_abs < 0.0 and ms_rel < 0.0:
-        estado_semaforo = '🔴 SOBREVALORADA'
+    elif methodology == 'value':
+        if ms_abs > 15.0 and ms_rel > 10.0:
+            estado_semaforo = '🟢 STRONG BUY'
+            alerta_compra = 1
+        elif ms_abs < 0.0 and ms_rel < 0.0:
+            estado_semaforo = '🔴 SOBREVALORADA'
+            alerta_compra = 0
+        else:
+            estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
+    elif methodology == 'growth':
+        peg = growth_metrics.get('peg_forward') or growth_metrics.get('peg_trailing')
+        rule40 = growth_metrics.get('rule_of_40')
+        if peg and rule40:
+            if peg < 1.5 and rule40 >= 40:
+                estado_semaforo = '🟢 GROWTH BUY'
+                alerta_compra = 1
+            elif peg > 2.5 or rule40 < 20:
+                estado_semaforo = '🔴 GROWTH OVERPRICED'
+                alerta_compra = 0
+            else:
+                estado_semaforo = '🟡 GROWTH HOLD'
+        else:
+            estado_semaforo = '🟡 SIN DATOS GROWTH'
+    elif methodology == 'speculative':
+        estado_semaforo = '⚠️ ALTO RIESGO'
         alerta_compra = 0
-    else:
-        estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
-        alerta_compra = 0
+    else:  # book_value, dividend
+        if ms_abs > 15.0:
+            estado_semaforo = '🟢 STRONG BUY'
+            alerta_compra = 1
+        elif ms_abs < 0.0:
+            estado_semaforo = '🔴 SOBREVALORADA'
+            alerta_compra = 0
+        else:
+            estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
 
     # ─── Quality Assessment ──────────────────────────────────
     calidad = assess_quality(
@@ -1221,8 +1540,8 @@ def run_full_analysis(data: dict) -> dict:
     dividend_yield_valid = True
     if dividend_yield > 0.20:
         # Likely a data error (ADR mismatch, special dividend, etc.)
+        logger.warning(f"{ticker}: Dividend yield {dividend_yield:.2%} suspiciously high - marking as unreliable")
         dividend_yield_valid = False
-        logger.warning(f"{ticker}: Dividend yield {dividend_yield:.2%} suspiciously high — marking as unreliable")
 
     payout_ratio = data.get('payout_ratio', 0) or 0
     if payout_ratio > 2.0:
@@ -1257,7 +1576,10 @@ def run_full_analysis(data: dict) -> dict:
 
         # FCF Real
         'fcf_real_values': fcf_result.get('fcf_real_values', []),
+        'fcf_pre_sbc_values': fcf_result.get('fcf_pre_sbc_values', []),
+        'sbc_values': fcf_result.get('sbc_values', []),
         'fcf_real_ttm': fcf_result.get('fcf_real_ttm'),
+        'fcf_ttm_pre_sbc': fcf_result.get('fcf_ttm_pre_sbc'),
         'fcf_real_hist_avg': fcf_result.get('fcf_real_hist_avg'),
         'fcf_trend': fcf_result.get('fcf_trend'),
 
@@ -1267,11 +1589,16 @@ def run_full_analysis(data: dict) -> dict:
         'roic_hist_avg': roic_result.get('roic_hist_avg'),
         'roic_trend': roic_result.get('roic_trend'),
 
+        # Methodology
+        'methodology': methodology,
+        'methodology_label': methodology_label,
+
         # Valuation
         'per_actual': per_actual,
         'per_history': per_history,
         'per_forward': data.get('per_forward'),
         'ev_fcf_actual': ev_fcf,
+        'ev_fcf_pre_sbc': ev_fcf_pre_sbc,  # D3: comparable with screeners (uses Yahoo FCF)
         'ev_fcf_history': ev_fcf_history,
         'graham_value': graham_value,
         'dcf_value': dcf_value,
@@ -1281,7 +1608,7 @@ def run_full_analysis(data: dict) -> dict:
         'margen_seguridad': mos,
         'ms_absoluto': ms_abs,
         'ms_relativo': ms_rel,
-        'analyst_target': data.get('target_price_mean'),
+        'analyst_target': data.get('analyst_target'),  # B2 FIX: was duplicated with wrong key
         'alerta_compra': alerta_compra,
         
         # New Phase 3 Metrics
@@ -1308,11 +1635,37 @@ def run_full_analysis(data: dict) -> dict:
         'growth_rate_pct': growth_rate_pct,
         'analyst_target': data.get('analyst_target'),
 
+        # Growth Investing Metrics
+        'peg_trailing': growth_metrics.get('peg_trailing'),
+        'peg_forward': growth_metrics.get('peg_forward'),
+        'peg_signal': growth_metrics.get('peg_signal'),
+        'rule_of_40': growth_metrics.get('rule_of_40'),
+        'rule_of_40_signal': growth_metrics.get('rule_of_40_signal'),
+        'ev_revenue_current': growth_metrics.get('ev_revenue_current'),
+        'ev_revenue_forward_3y': growth_metrics.get('ev_revenue_forward_3y'),
+        'has_growth_metrics': growth_metrics.get('has_growth_metrics', False),
+
         # Dividend
         'dividend_yield': dividend_yield if dividend_yield_valid else None,
         'dividend_yield_raw': dividend_yield,  # Always available for debugging
         'dividend_yield_valid': dividend_yield_valid,
         'payout_ratio': payout_ratio,
+
+        # New: Reverse DCF & Sensitivity
+        'implied_growth': implied_growth,
+        'sensitivity': sens_table,
+
+        # New: Beta & Risk
+        'beta': data.get('beta'),
+
+        # New: Growth Source (confidence indicator)
+        'growth_source': growth_source,
+
+        # Revenue (for frontend display)
+        'revenue_values': revenue_values,
+
+        # Business Summary (for thesis)
+        'business_summary': data.get('business_summary', ''),
 
         # Meta
         'fetched_at': data.get('fetched_at', ''),
@@ -1324,7 +1677,8 @@ def run_full_analysis(data: dict) -> dict:
 
 def generate_investment_thesis(analysis: dict) -> str:
     """
-    Generate a brief investment thesis based on analysis results.
+    Generate a rich investment thesis with specific data, sector context,
+    SBC warnings, and implied growth sanity check.
     """
     ticker = analysis.get('ticker', '?')
     empresa = analysis.get('empresa', '?')
@@ -1337,41 +1691,53 @@ def generate_investment_thesis(analysis: dict) -> str:
     intrinsic = analysis.get('intrinsic_value', 0)
     archetype = analysis.get('archetype_label', '')
     currency = analysis.get('currency', 'USD')
+    sector = analysis.get('sector', '')
+    industry = analysis.get('industry', '')
+    implied = analysis.get('implied_growth')
+    growth_rate = analysis.get('growth_rate', 0)
+    growth_source = analysis.get('growth_source', 'default')
+    fcf_ttm = analysis.get('fcf_real_ttm')
+    sbc_vals = analysis.get('sbc_values', [])
+    fcf_pre_sbc = analysis.get('fcf_ttm_pre_sbc')
+    beta = analysis.get('beta')
+    summary = analysis.get('business_summary', '')
 
     parts = []
 
-    # Archetype context
+    # Business context
+    if summary:
+        truncated = summary[:200] + '...' if len(summary) > 200 else summary
+        parts.append(f"{empresa} ({industry}, {sector}): {truncated}")
+    else:
+        parts.append(f"{empresa} opera en {industry} ({sector}).")
+
+    # Archetype
     parts.append(f"Clasificada como {archetype}.")
 
-    # Quality
-    if '⭐' in calidad:
-        parts.append(f"Negocio de alta calidad con ventajas competitivas duraderas.")
-    elif '✅' in calidad:
-        parts.append(f"Negocio de calidad aceptable con fundamentos sólidos.")
-    elif '⚠️' in (analysis.get('archetype_id') or ''):
-        parts.append(f"Empresa sin beneficios — valoración altamente especulativa.")
-    else:
-        parts.append(f"Negocio que requiere análisis cualitativo adicional.")
-
-    # ROIC
+    # Quality + ROIC
     if roic and roic > 20:
-        parts.append(f"ROIC del {roic:.1f}% indica un moat económico fuerte.")
+        parts.append(f"ROIC del {roic:.1f}% indica un moat económico fuerte (ventaja competitiva duradera).")
     elif roic and roic > 12:
         parts.append(f"ROIC del {roic:.1f}% sugiere ventajas competitivas moderadas.")
+    elif roic:
+        parts.append(f"ROIC del {roic:.1f}% — retorno sobre capital modesto.")
 
-    # FCF
-    if fcf_trend == '↑':
-        parts.append("Flujo de caja libre creciente en los últimos años.")
-    elif fcf_trend == '→':
-        parts.append("Flujo de caja libre estable.")
-    elif fcf_trend == '↓':
-        parts.append("⚠️ Flujo de caja libre decreciente — investigar causas.")
+    # FCF + SBC warning
+    if fcf_ttm:
+        fcf_str = f"${fcf_ttm/1e9:.1f}B" if abs(fcf_ttm) >= 1e9 else f"${fcf_ttm/1e6:.0f}M"
+        parts.append(f"FCF Real (ajustado por SBC): {fcf_str}, tendencia {fcf_trend}.")
+    if sbc_vals and sbc_vals[0] and fcf_pre_sbc and fcf_pre_sbc > 0:
+        sbc_pct = (sbc_vals[0] / fcf_pre_sbc) * 100
+        if sbc_pct > 30:
+            parts.append(f"⚠️ SBC elevado ({sbc_pct:.0f}% del FCF pre-SBC) — dilución significativa para el accionista.")
+        elif sbc_pct > 15:
+            parts.append(f"SBC representa el {sbc_pct:.0f}% del FCF pre-SBC — nivel moderado de dilución.")
 
     # Valuation
     if mos > 30:
         parts.append(f"Cotiza a {currency} {price:.2f} vs valor intrínseco {currency} {intrinsic:.2f} — Margen de seguridad amplio ({mos:.0f}%).")
         if '⭐' in calidad or '✅' in calidad:
-            parts.append("⚠️ **Alerta Cualitativa:** Números excelentes pero con un castigo bursátil muy severo. Auditar si existe una disrupción permanente por parte de la competencia (pérdida de momentum, nuevos rivales) o si es un problema temporal.")
+            parts.append("⚠️ Alerta: Números excelentes pero castigo bursátil severo. Auditar si hay disrupción competitiva permanente o si es una oportunidad temporal.")
     elif mos > 20:
         parts.append(f"Margen de seguridad del {mos:.0f}% — dentro del rango aceptable para inversión valor.")
     elif mos > 0:
@@ -1379,10 +1745,26 @@ def generate_investment_thesis(analysis: dict) -> str:
     else:
         parts.append(f"Cotiza por encima del valor intrínseco estimado — sobrevalorada.")
 
-    # PER
-    if per and per < 15:
-        parts.append(f"PER de {per:.1f}x — valoración atractiva.")
-    elif per and per > 30:
-        parts.append(f"PER de {per:.1f}x — valoración exigente.")
+    # Implied Growth sanity check
+    if implied is not None and growth_rate:
+        implied_pct = implied * 100
+        growth_pct = growth_rate * 100
+        if implied_pct > growth_pct * 1.5:
+            parts.append(f"⚠️ El precio actual implica un crecimiento del {implied_pct:.1f}% anual (vs {growth_pct:.1f}% estimado) — el mercado es muy optimista.")
+        elif implied_pct < growth_pct * 0.5 and implied_pct > 0:
+            parts.append(f"💎 El precio actual solo implica un crecimiento del {implied_pct:.1f}% anual (vs {growth_pct:.1f}% estimado) — posible oportunidad.")
+
+    # Growth confidence
+    if growth_source == 'default':
+        parts.append("📊 Nota: Estimación de crecimiento basada en valor por defecto (5%) — sin datos de analistas ni historial suficiente.")
+    elif growth_source == 'eps_cagr':
+        parts.append("📊 Estimación de crecimiento basada en el CAGR histórico de beneficios.")
+
+    # Beta
+    if beta and beta > 1.5:
+        parts.append(f"Beta de {beta:.2f} — alta volatilidad relativa al mercado.")
+    elif beta and beta < 0.7:
+        parts.append(f"Beta de {beta:.2f} — activo defensivo con baja volatilidad.")
 
     return " ".join(parts)
+

@@ -18,6 +18,7 @@ from backend.engine import (
     margin_of_safety, assess_quality,
     detect_archetype, get_wacc,
     run_full_analysis,
+    calculate_growth_metrics,
 )
 
 
@@ -315,6 +316,79 @@ class TestArchetypeDetection(unittest.TestCase):
                 'shares_history': [4.3e9, 4.3e9, 4.3e9]}  # flat share count
         arch_id, _ = detect_archetype(data, roic_avg=14, growth_rate=0.05, eps_ttm=2.5, fcf_ttm=10e9)
         self.assertEqual(arch_id, 'classic_value')
+
+
+class TestGrowthMetrics(unittest.TestCase):
+    """Test Growth Investing metrics: PEG, Rule of 40, EV/Revenue."""
+
+    def test_peg_trailing_undervalued(self):
+        """PER 20x with 25% growth → PEG 0.8 (undervalued)."""
+        res = calculate_growth_metrics(
+            data={}, growth_rate=0.25, rev_growth=0.25,
+            fcf_margin=0.15, per_actual=20, per_forward=18,
+            ev=50e9, revenue_current=10e9
+        )
+        self.assertEqual(res['peg_trailing'], 0.8)
+        self.assertEqual(res['peg_signal'], 'undervalued')
+
+    def test_peg_overvalued(self):
+        """PER 50x with 10% growth → PEG 5.0 (overvalued)."""
+        res = calculate_growth_metrics(
+            data={}, growth_rate=0.10, rev_growth=0.10,
+            fcf_margin=0.05, per_actual=50, per_forward=None,
+            ev=100e9, revenue_current=10e9
+        )
+        self.assertEqual(res['peg_trailing'], 5.0)
+        self.assertEqual(res['peg_signal'], 'overvalued')
+
+    def test_peg_no_growth(self):
+        """Zero growth → PEG should be None."""
+        res = calculate_growth_metrics(
+            data={}, growth_rate=0, rev_growth=0,
+            fcf_margin=0.15, per_actual=20, per_forward=None,
+            ev=50e9, revenue_current=10e9
+        )
+        self.assertIsNone(res['peg_trailing'])
+
+    def test_rule_of_40_premium(self):
+        """25% growth + 20% FCF margin = 45 → premium."""
+        res = calculate_growth_metrics(
+            data={}, growth_rate=0.25, rev_growth=0.25,
+            fcf_margin=0.20, per_actual=30, per_forward=None,
+            ev=50e9, revenue_current=10e9
+        )
+        self.assertEqual(res['rule_of_40'], 45.0)
+        self.assertEqual(res['rule_of_40_signal'], 'premium')
+
+    def test_rule_of_40_weak(self):
+        """5% growth + 10% FCF margin = 15 → weak."""
+        res = calculate_growth_metrics(
+            data={}, growth_rate=0.05, rev_growth=0.05,
+            fcf_margin=0.10, per_actual=15, per_forward=None,
+            ev=50e9, revenue_current=10e9
+        )
+        self.assertEqual(res['rule_of_40'], 15.0)
+        self.assertEqual(res['rule_of_40_signal'], 'weak')
+
+    def test_ev_revenue_forward(self):
+        """EV 50B / Revenue 10B = 5x current, projected 3y at 25% growth."""
+        res = calculate_growth_metrics(
+            data={}, growth_rate=0.25, rev_growth=0.25,
+            fcf_margin=0.15, per_actual=30, per_forward=None,
+            ev=50e9, revenue_current=10e9
+        )
+        self.assertEqual(res['ev_revenue_current'], 5.0)
+        # 10B * 1.25^3 ≈ 19.53B → 50/19.53 ≈ 2.56
+        self.assertAlmostEqual(res['ev_revenue_forward_3y'], 2.56, places=1)
+
+    def test_no_metrics_when_no_data(self):
+        """All None inputs → no growth metrics available."""
+        res = calculate_growth_metrics(
+            data={}, growth_rate=0, rev_growth=0,
+            fcf_margin=0, per_actual=None, per_forward=None,
+            ev=0, revenue_current=0
+        )
+        self.assertFalse(res['has_growth_metrics'])
 
 
 class TestWACC(unittest.TestCase):
