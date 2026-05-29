@@ -124,10 +124,46 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         current_price = info.get('currentPrice') or info.get('regularMarketPrice', 0)
         enterprise_value = info.get('enterpriseValue', 0)
 
+        # ─── Sub-unit Currency Fix (GBp→GBP, ZAc→ZAR, ILA→ILS) ──
+        # Some exchanges quote prices in sub-units (pence, cents, agorot)
+        # but financial statements are in the base currency.
+        _SUBUNIT_MAP = {'GBp': ('GBP', 100), 'GBX': ('GBP', 100), 'ZAc': ('ZAR', 100), 'ILA': ('ILS', 100)}
+        _subunit_info = _SUBUNIT_MAP.get(currency)
+        _currency_divisor = _subunit_info[1] if _subunit_info else 1
+        _base_currency = _subunit_info[0] if _subunit_info else currency
+
+        if _currency_divisor > 1:
+            current_price = current_price / _currency_divisor
+            logger.debug(f"{ticker_symbol}: Converted price from {currency} "
+                         f"(÷{_currency_divisor}) → {current_price:.2f} {_base_currency}")
+
+        # ─── Cross-currency: Market vs Financial ─────────────────
+        # If financialCurrency differs from base_currency, we need a
+        # conversion factor so the engine can compare price vs intrinsic.
+        # Derive it from: price_in_financial_currency = EPS * trailingPE
+        _fx_rate = 1.0  # financial_currency per base_currency
+        if financial_currency and _base_currency and financial_currency != _base_currency:
+            trailing_pe = info.get('trailingPE')
+            trailing_eps = info.get('trailingEps')
+            if trailing_pe and trailing_eps and trailing_pe > 0 and trailing_eps > 0:
+                # price_in_financial_curr = eps * pe
+                implied_price_fin = trailing_eps * trailing_pe
+                if current_price > 0:
+                    _fx_rate = implied_price_fin / current_price
+                    logger.debug(f"{ticker_symbol}: FX rate {_base_currency}→{financial_currency} = {_fx_rate:.4f}")
+            # Apply: convert current_price to financialCurrency for engine
+            current_price = current_price * _fx_rate
+
         # New fields for archetype valuation models
-        book_value = info.get('bookValue', 0)  # Book value per share (for Financial archetype)
-        roe = info.get('returnOnEquity', 0)  # Return on equity (for Financial archetype)
-        dividend_rate = info.get('dividendRate', 0)  # Annual dividend per share (for DDM)
+        book_value = info.get('bookValue', 0)  # Book value per share (already in financialCurrency)
+        roe = info.get('returnOnEquity', 0)  # Return on equity
+        dividend_rate = info.get('dividendRate', 0)  # Annual dividend per share
+
+        # Convert dividend_rate from sub-unit if needed, then to financial currency
+        if _currency_divisor > 1 and dividend_rate:
+            dividend_rate = dividend_rate / _currency_divisor
+        if _fx_rate != 1.0 and dividend_rate:
+            dividend_rate = dividend_rate * _fx_rate
 
         # ─── EPS ─────────────────────────────────────────────────
         # Historical EPS from income statement
@@ -320,6 +356,11 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         # ─── Analyst Growth Estimate ─────────────────────────────
         growth_estimate = info.get('earningsGrowth') or info.get('revenueGrowth')
         analyst_target = info.get('targetMeanPrice')
+        # Analyst target is in market currency, convert to financial currency
+        if analyst_target and _currency_divisor > 1:
+            analyst_target = analyst_target / _currency_divisor
+        if analyst_target and _fx_rate != 1.0:
+            analyst_target = analyst_target * _fx_rate
 
         # ─── Trailing PER ────────────────────────────────────────
         per_trailing = info.get('trailingPE')
@@ -328,6 +369,12 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         # ─── Dividend Info ───────────────────────────────────────
         dividend_yield = info.get('dividendYield', 0)
         payout_ratio = info.get('payoutRatio', 0)
+        # Yahoo sometimes returns yield/payout as percentage (3.7) vs ratio (0.037)
+        # Normalize: values > 1 are clearly percentages, convert to ratio
+        if dividend_yield and dividend_yield > 1:
+            dividend_yield = dividend_yield / 100
+        if payout_ratio and payout_ratio > 5:
+            payout_ratio = payout_ratio / 100
 
         # ─── Qualitative & Governance Info ──────────────────────
         held_percent_insiders = info.get('heldPercentInsiders')
