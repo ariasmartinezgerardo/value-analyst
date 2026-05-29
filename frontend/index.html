@@ -93,24 +93,25 @@
       <p class="page__subtitle">Escanea el mercado en busca de empresas infravaloradas de alta calidad</p>
       
       <div class="explorer-search">
-        <!-- Row 1: Market + Profile preset -->
+        <!-- Row 1: Market (geographic only) + Profile preset -->
         <div class="explorer-row">
           <div class="explorer-field">
             <label for="explore-market">Mercado</label>
             <select id="explore-market" class="modal__input">
-              <optgroup label="🌍 Índices Globales">
-                <option value="sp500" selected>S&P 500 (EEUU)</option>
-                <option value="dowjones">Dow Jones (Clásicas EEUU)</option>
-                <option value="nasdaq">NASDAQ 100 (Tech)</option>
-                <option value="stoxx600">STOXX 600 (Europa)</option>
-                <option value="japan">Nikkei 225 (Japón)</option>
+              <optgroup label="🇺🇸 Estados Unidos">
+                <option value="sp500" selected>S&P 500</option>
+                <option value="dowjones">Dow Jones 30</option>
+                <option value="nasdaq">NASDAQ 100</option>
               </optgroup>
-              <optgroup label="🎯 Sectores Temáticos">
-                <option value="pharma">Salud y Farma</option>
-                <option value="finance">Finanzas y Bancos</option>
-                <option value="consumer">Consumo y Retail</option>
-                <option value="energy">Energía y Utilities</option>
-                <option value="defense">Aeroespacial y Defensa</option>
+              <optgroup label="🇪🇺 Europa">
+                <option value="stoxx600">STOXX 600 (Pan-Europa)</option>
+                <option value="ftse100">FTSE 100 (Reino Unido)</option>
+                <option value="dax40">DAX 40 (Alemania)</option>
+                <option value="cac40">CAC 40 (Francia)</option>
+                <option value="ibex35">IBEX 35 (España)</option>
+              </optgroup>
+              <optgroup label="🌏 Asia">
+                <option value="japan">Nikkei / Japón (ADRs)</option>
               </optgroup>
             </select>
           </div>
@@ -125,7 +126,7 @@
           </div>
         </div>
 
-        <!-- Row 2: Archetype + Sector filters -->
+        <!-- Row 2: Archetype + Sector -->
         <div class="explorer-row">
           <div class="explorer-field">
             <label for="explore-archetype">Arquetipo</label>
@@ -141,17 +142,27 @@
           <div class="explorer-field">
             <label for="explore-sector">Sector</label>
             <select id="explore-sector" class="modal__input">
-              <option value="all" selected>Todos</option>
-              <option value="Technology">💻 Tecnología</option>
-              <option value="Healthcare">🏥 Healthcare</option>
-              <option value="Financial">🏦 Financiero</option>
-              <option value="Consumer">🛒 Consumo</option>
-              <option value="Industrials">🏭 Industrial</option>
-              <option value="Energy">⚡ Energía</option>
-              <option value="Communication">📡 Comunicaciones</option>
-              <option value="Real Estate">🏠 Inmobiliario</option>
-              <option value="Materials">🧱 Materiales</option>
-              <option value="Utilities">💡 Utilities</option>
+              <option value="all" selected>Todos los sectores</option>
+              <optgroup label="📋 Listas Temáticas (40 empresas)">
+                <option value="sector_tech">💻 Tecnología</option>
+                <option value="sector_pharma">🏥 Salud y Farma</option>
+                <option value="sector_finance">🏦 Finanzas y Bancos</option>
+                <option value="sector_consumer">🛒 Consumo y Retail</option>
+                <option value="sector_energy">⚡ Energía y Utilities</option>
+                <option value="sector_defense">🛡️ Aeroespacial y Defensa</option>
+              </optgroup>
+              <optgroup label="🔍 Filtrar por Sector Yahoo">
+                <option value="Technology">💻 Technology</option>
+                <option value="Healthcare">🏥 Healthcare</option>
+                <option value="Financial">🏦 Financial Services</option>
+                <option value="Consumer">🛒 Consumer</option>
+                <option value="Industrials">🏭 Industrials</option>
+                <option value="Energy">⚡ Energy</option>
+                <option value="Communication">📡 Communication</option>
+                <option value="Real Estate">🏠 Real Estate</option>
+                <option value="Materials">🧱 Materials</option>
+                <option value="Utilities">💡 Utilities</option>
+              </optgroup>
             </select>
           </div>
         </div>

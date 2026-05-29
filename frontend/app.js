@@ -1059,9 +1059,9 @@ window.updateExploreChips = function() {
 async function exploreOpportunities() {
   if (state.isExploring) return;
   
-  const selectMarket = document.getElementById('explore-market');
-  const market = selectMarket ? selectMarket.value : 'sp500';
-  const marketName = selectMarket ? selectMarket.options[selectMarket.selectedIndex].text : 'del mercado';
+  let market = document.getElementById('explore-market')?.value || 'sp500';
+  const marketSelect = document.getElementById('explore-market');
+  let marketName = marketSelect ? marketSelect.options[marketSelect.selectedIndex].text : 'del mercado';
   
   // Read slider values
   const maxPer = document.getElementById('slider-per')?.value || 20;
@@ -1071,7 +1071,20 @@ async function exploreOpportunities() {
 
   // Read archetype/sector
   const archetype = document.getElementById('explore-archetype')?.value || 'all';
-  const sector = document.getElementById('explore-sector')?.value || 'all';
+  const sectorRaw = document.getElementById('explore-sector')?.value || 'all';
+  const sectorSelect = document.getElementById('explore-sector');
+  
+  // Determine if sector is a curated list (sector_*) or a Yahoo filter
+  let sectorFilter = 'all';
+  if (sectorRaw.startsWith('sector_')) {
+    // Curated list: override market with the themed list
+    market = sectorRaw;
+    const sectorName = sectorSelect ? sectorSelect.options[sectorSelect.selectedIndex].text : sectorRaw;
+    marketName = sectorName;
+  } else if (sectorRaw !== 'all') {
+    // Yahoo sector filter: filter within the selected market
+    sectorFilter = sectorRaw;
+  }
 
   const btn = document.getElementById('btn-explore');
   const resultsContainer = document.getElementById('explorer-results');
@@ -1091,9 +1104,9 @@ async function exploreOpportunities() {
   `;
 
   try {
-    let queryStr = `?market=${market}&max_per=${maxPer}&min_roic=${minRoic}&min_fcf_yield=${minFcf}&min_mos=${minMos}`;
+    let queryStr = `?market=${encodeURIComponent(market)}&max_per=${maxPer}&min_roic=${minRoic}&min_fcf_yield=${minFcf}&min_mos=${minMos}`;
     if (archetype !== 'all') queryStr += `&archetype=${archetype}`;
-    if (sector !== 'all') queryStr += `&sector=${encodeURIComponent(sector)}`;
+    if (sectorFilter !== 'all') queryStr += `&sector=${encodeURIComponent(sectorFilter)}`;
     queryStr += `&sort_by=mos`; // Initial sort
 
     const data = await apiGet('/explore' + queryStr);

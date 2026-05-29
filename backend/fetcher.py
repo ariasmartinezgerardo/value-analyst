@@ -465,6 +465,7 @@ def fetch_quick_info(ticker_symbol: str) -> dict:
 def get_market_tickers(market: str = 'sp500') -> list:
     """Return a curated list of well-known tickers for the selected market."""
     markets = {
+        # ─── Geographic Indices ───────────────────────────────────
         'sp500': [
             'AAPL', 'MSFT', 'GOOG', 'AMZN', 'META', 'BRK-B', 'JNJ', 'V', 'PG', 'UNH',
             'HD', 'MA', 'DIS', 'NVDA', 'PYPL', 'ADBE', 'NFLX', 'CMCSA', 'PFE', 'KO',
@@ -479,6 +480,11 @@ def get_market_tickers(market: str = 'sp500') -> list:
             'REGN', 'ADP', 'MU', 'PANW', 'SNPS', 'KLAC', 'CDNS', 'MELI', 'CSX', 'PYPL',
             'MAR', 'MNST', 'ORLY', 'NXPI', 'CTAS', 'PCAR', 'WDAY', 'CRWD', 'LULU', 'ROST'
         ],
+        'dowjones': [
+            'MMM', 'AXP', 'AMGN', 'AAPL', 'BA', 'CAT', 'CVX', 'CSCO', 'KO', 'DIS',
+            'DOW', 'GS', 'HD', 'HON', 'IBM', 'INTC', 'JNJ', 'JPM', 'MCD', 'MRK',
+            'MSFT', 'NKE', 'PG', 'CRM', 'TRV', 'UNH', 'VZ', 'V', 'WBA', 'WMT'
+        ],
         'stoxx600': [
             'NVO', 'MC.PA', 'ASML.AS', 'SAP.DE', 'RMS.PA', 'SIE.DE', 'OR.PA', 'TTE.PA', 'SAN.PA', 'SU.PA',
             'ALV.DE', 'AIR.PA', 'IBE.MC', 'ITX.MC', 'BNP.PA', 'DPW.DE', 'DTE.DE', 'MUV2.DE', 'ENGI.PA', 'SAN.MC',
@@ -486,45 +492,74 @@ def get_market_tickers(market: str = 'sp500') -> list:
             'CABK.MC', 'REP.MC', 'BBVA.MC', 'TEF.MC', 'AENA.MC', 'FER.MC', 'AMS.MC', 'ANA.MC', 'ENG.MC', 'RED.MC',
             'UNA.AS', 'HEIA.AS', 'INGA.AS', 'AD.AS', 'PRX.AS', 'AKZA.AS', 'ASM.AS', 'BESI.AS', 'DSM.AS', 'KPN.AS'
         ],
-        'dowjones': [
-            'MMM', 'AXP', 'AMGN', 'AAPL', 'BA', 'CAT', 'CVX', 'CSCO', 'KO', 'DIS',
-            'DOW', 'GS', 'HD', 'HON', 'IBM', 'INTC', 'JNJ', 'JPM', 'MCD', 'MRK',
-            'MSFT', 'NKE', 'PG', 'CRM', 'TRV', 'UNH', 'VZ', 'V', 'WBA', 'WMT'
+        'ftse100': [
+            'SHEL.L', 'AZN.L', 'HSBA.L', 'ULVR.L', 'BP.L', 'RIO.L', 'GSK.L', 'DGE.L', 'REL.L', 'LSEG.L',
+            'BA.L', 'EXPN.L', 'CPG.L', 'AAL.L', 'CRH.L', 'NG.L', 'SSE.L', 'VOD.L', 'ABF.L', 'AHT.L',
+            'RKT.L', 'PRU.L', 'LLOY.L', 'BARC.L', 'NWG.L', 'STAN.L', 'ANTO.L', 'WPP.L', 'III.L', 'ITRK.L'
+        ],
+        'dax40': [
+            'SAP.DE', 'SIE.DE', 'ALV.DE', 'DTE.DE', 'MUV2.DE', 'BAS.DE', 'MBG.DE', 'BMW.DE', 'AIR.PA', 'VOW3.DE',
+            'ADS.DE', 'IFX.DE', 'DB1.DE', 'DPW.DE', 'HEN3.DE', 'FRE.DE', 'BEI.DE', 'BAYN.DE', 'RWE.DE', 'MTX.DE',
+            'MRK.DE', 'CON.DE', 'HEI.DE', 'ENR.DE', 'ZAL.DE', 'SHL.DE', 'SY1.DE', 'PUM.DE', 'QIA.DE', 'FME.DE'
+        ],
+        'cac40': [
+            'MC.PA', 'OR.PA', 'RMS.PA', 'TTE.PA', 'SAN.PA', 'SU.PA', 'AIR.PA', 'BNP.PA', 'CS.PA', 'BN.PA',
+            'DG.PA', 'AI.PA', 'ACA.PA', 'SGO.PA', 'RI.PA', 'KER.PA', 'VIE.PA', 'SAF.PA', 'ENGI.PA', 'WLN.PA',
+            'DSY.PA', 'CAP.PA', 'LR.PA', 'HO.PA', 'AM.PA', 'ERF.PA', 'ML.PA', 'STM.PA', 'RNO.PA', 'VIV.PA'
+        ],
+        'ibex35': [
+            'ITX.MC', 'IBE.MC', 'SAN.MC', 'BBVA.MC', 'TEF.MC', 'AENA.MC', 'FER.MC', 'AMS.MC', 'REP.MC', 'ANA.MC',
+            'ENG.MC', 'RED.MC', 'CABK.MC', 'GRF.MC', 'IAG.MC', 'MAP.MC', 'CLNX.MC', 'FDR.MC', 'ACX.MC', 'MTS.MC',
+            'NTGY.MC', 'SAB.MC', 'BKT.MC', 'LOG.MC', 'MEL.MC', 'COL.MC', 'VIS.MC', 'ACS.MC', 'PHM.MC', 'CIE.MC'
         ],
         'japan': [
-            'TM', 'SONY', 'KEY', 'MUFG', 'NTTYY', 'SMFG', 'MITSF', 'HMC', 'TAK', 'CAJ',
-            'SFTBY', 'FUJIY', 'PCRFY', 'DCSO', 'NSANY', 'MRAAY', 'KUBTY', 'NIPNY', 'MZHOF', 'RNMBY',
-            'TDK', 'DNZOY', 'KAO', 'FJTSY', 'MCO', 'SHCAY', 'YAMCY', 'SNE', 'SMNNY', 'KMTUY',
-            'FANUY', 'TKOMY', 'TYHOY', 'AONNY', 'SSUMY', 'KMBUY', 'ITOCY', 'MIELY', 'MTU', 'MFG'
+            'TM', 'SONY', 'MUFG', 'NTTYY', 'SMFG', 'HMC', 'TAK', 'CAJ',
+            'SFTBY', 'FUJIY', 'PCRFY', 'NSANY', 'MRAAY', 'KUBTY', 'NIPNY',
+            'TDK', 'DNZOY', 'KAO', 'FJTSY', 'SHCAY', 'YAMCY', 'SMNNY', 'KMTUY',
+            'FANUY', 'TKOMY', 'ITOCY', 'MIELY', 'MFG'
         ],
-        'pharma': [
+
+        # ─── Thematic Sector Lists ────────────────────────────────
+        'sector_pharma': [
             'JNJ', 'LLY', 'NVO', 'UNH', 'MRK', 'ABBV', 'TMO', 'AZN', 'NVS', 'DHR',
             'PFE', 'AMGN', 'ABT', 'ISRG', 'SYK', 'MDT', 'VRTX', 'REGN', 'BSX', 'ZTS',
             'GSK', 'GILD', 'BDX', 'CVS', 'CI', 'ELV', 'HUM', 'MCK', 'CNC', 'BIIB',
             'ILMN', 'IDXX', 'ALGN', 'DXCM', 'RMD', 'STE', 'WST', 'CRL', 'BIO', 'TECH'
         ],
-        'finance': [
+        'sector_finance': [
             'JPM', 'V', 'MA', 'BAC', 'WFC', 'MS', 'GS', 'SPGI', 'AXP', 'RY',
             'C', 'SCHW', 'BLK', 'CB', 'PGR', 'CME', 'MMC', 'TD', 'USB', 'PNC',
             'TFC', 'COF', 'BK', 'AON', 'ICE', 'MCO', 'AIG', 'PRU', 'MET', 'TRV',
             'ALL', 'DFS', 'SYF', 'FITB', 'MTB', 'HBAN', 'RF', 'CFG', 'KEY', 'CMA'
         ],
-        'consumer': [
+        'sector_consumer': [
             'WMT', 'PG', 'KO', 'PEP', 'COST', 'LVMH.PA', 'HD', 'MCD', 'NKE', 'SBUX',
             'TGT', 'LOW', 'EL', 'CL', 'KMB', 'GIS', 'SYY', 'HSY', 'K', 'CAG',
             'DG', 'DLTR', 'ROST', 'TJX', 'ORLY', 'AZO', 'TSCO', 'YUM', 'DRI', 'CMG',
             'DPZ', 'M', 'JWN', 'GPS', 'KSS', 'VFC', 'UAA', 'RCL', 'CCL', 'HLT'
         ],
-        'energy': [
-            'XOM', 'CVX', 'SHEL', 'TTE', 'BP', 'COP', 'EOG', 'PXD', 'OXY', 'VLO',
-            'MPC', 'PSX', 'HES', 'DVN', 'HAL', 'SLB', 'BKR', 'KMI', 'WMB', 'OKE',
+        'sector_energy': [
+            'XOM', 'CVX', 'SHEL', 'TTE', 'BP', 'COP', 'EOG', 'OXY', 'VLO',
+            'MPC', 'PSX', 'DVN', 'HAL', 'SLB', 'BKR', 'KMI', 'WMB', 'OKE',
             'NEE', 'DUK', 'SO', 'D', 'AEP', 'EXC', 'XEL', 'SRE', 'WEC', 'ES',
             'ED', 'PEG', 'EIX', 'AWK', 'CNP', 'CMS', 'LNT', 'ATO', 'NI', 'NRG'
         ],
-        'defense': [
+        'sector_defense': [
             'LMT', 'RTX', 'NOC', 'GD', 'BA', 'LHX', 'HII', 'TDG', 'TXT', 'LDOS',
             'BA.L', 'HO.PA', 'SAF.PA', 'RHO.PA', 'LDO.MI', 'MTX.DE', 'SU.PA', 'AM.PA',
             'HEI', 'WWD', 'BWXT', 'PLTR', 'OSK', 'AVAV', 'KTOS', 'HWM', 'SPR', 'RKLB'
-        ]
+        ],
+        'sector_tech': [
+            'AAPL', 'MSFT', 'NVDA', 'AVGO', 'ADBE', 'CRM', 'ORCL', 'INTU', 'AMD', 'QCOM',
+            'AMAT', 'ADI', 'LRCX', 'SNPS', 'KLAC', 'CDNS', 'NXPI', 'MRVL', 'PANW', 'CRWD',
+            'NET', 'ZS', 'DDOG', 'SNOW', 'WDAY', 'NOW', 'TEAM', 'VEEV', 'HUBS', 'TTD',
+            'MU', 'INTC', 'TXN', 'TSM', 'ASML', 'ACN', 'IBM', 'PLTR', 'UBER', 'SQ'
+        ],
+
+        # Legacy aliases (keep for backward compatibility)
+        'pharma': None, 'finance': None, 'consumer': None, 'energy': None, 'defense': None,
     }
+    # Handle legacy aliases
+    if market.lower() in ('pharma', 'finance', 'consumer', 'energy', 'defense'):
+        market = 'sector_' + market.lower()
     return markets.get(market.lower(), markets['sp500'])
