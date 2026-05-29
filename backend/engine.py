@@ -203,6 +203,8 @@ def calculate_fcf_real(data: dict) -> dict:
     SBC (Stock Based Compensation) is deducted because it dilutes shareholders
     even though it's a non-cash expense. This is critical for tech companies.
 
+    If SBC data is not available (common for European companies), FCF Real = FCF Yahoo.
+
     Returns dict with historical FCF values (adjusted) and pre-SBC values.
     """
     fcf_yahoo = data.get('fcf_yahoo_values', [])
@@ -212,24 +214,23 @@ def calculate_fcf_real(data: dict) -> dict:
     fcf_pre_sbc_values = []
     sbc_annual = []
     
-    min_len = min(len(fcf_yahoo), len(sbc)) if fcf_yahoo and sbc else 0
-    
-    for i in range(min_len):
+    # FIX: Process all available FCF years. If SBC is missing/short, treat as 0.
+    # Previously: min(len(fcf), len(sbc)) — which returned 0 when sbc was empty,
+    # causing companies like RACE, LVMH, Hermès to have NO FCF data at all.
+    for i in range(len(fcf_yahoo)):
         f = fcf_yahoo[i] or 0
-        s = sbc[i] or 0
+        s = abs(sbc[i] or 0) if i < len(sbc) else 0
         fcf_pre_sbc_values.append(f)
-        sbc_annual.append(abs(s))
-        fcf_real_values.append(f - abs(s))
+        sbc_annual.append(s)
+        fcf_real_values.append(f - s)
         
     fcf_ttm_pre_sbc = None
     fcf_ttm = None
     
-    # We use the most recent annual FCF as a proxy for TTM if specific TTM isn't strictly available,
-    # as Yahoo's FCF values are typically annual.
     if fcf_yahoo and fcf_yahoo[0] is not None:
         fcf_ttm_pre_sbc = fcf_yahoo[0]
-        if sbc and sbc[0] is not None:
-            fcf_ttm = fcf_ttm_pre_sbc - abs(sbc[0])
+        sbc_latest = abs(sbc[0] or 0) if sbc and sbc[0] is not None else 0
+        fcf_ttm = fcf_ttm_pre_sbc - sbc_latest
             
     hist_avg = _avg(fcf_real_values[1:]) if len(fcf_real_values) > 1 else _avg(fcf_real_values)
     
