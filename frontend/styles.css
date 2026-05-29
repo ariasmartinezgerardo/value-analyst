@@ -1512,4 +1512,278 @@ button.filter-chip.active:hover {
   box-shadow: 0 4px 20px rgba(251, 191, 36, 0.08);
 }
 
+/* ─── Detail Tabs ──────────────────────────────────────────────── */
+.detail-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 2px solid var(--border-subtle);
+  margin-bottom: var(--space-md);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.detail-tabs::-webkit-scrollbar { display: none; }
+
+.detail-tab {
+  flex: 1;
+  padding: 10px 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+  text-align: center;
+  font-family: var(--font-main);
+  letter-spacing: 0.02em;
+}
+
+.detail-tab:hover {
+  color: var(--text-secondary);
+}
+
+.detail-tab.active {
+  color: var(--accent-primary);
+  border-bottom: 2px solid var(--accent-primary);
+}
+
+.detail-tab-content {
+  display: none;
+}
+
+.detail-tab-content.active {
+  display: block;
+  animation: fadeIn 0.25s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ─── Scorecard ────────────────────────────────────────────────── */
+.scorecard {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.scorecard__item {
+  text-align: center;
+  padding: 10px 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  transition: all var(--transition-fast);
+}
+
+.scorecard__item:hover {
+  border-color: var(--accent-primary-dim);
+  background: var(--bg-card-hover);
+}
+
+.scorecard__label {
+  display: block;
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.scorecard__value {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  margin-bottom: 2px;
+}
+
+.scorecard__signal {
+  display: block;
+  font-size: 0.85rem;
+}
+
+/* ─── Sensitivity Table ────────────────────────────────────────── */
+.sensitivity-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+}
+
+.sensitivity-table th {
+  padding: 8px 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sensitivity-table td {
+  padding: 8px 6px;
+  text-align: center;
+  border: 1px solid var(--border-subtle);
+  font-weight: 500;
+}
+
+.sensitivity-table .sens-cell--green {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+}
+
+.sensitivity-table .sens-cell--yellow {
+  color: var(--color-warning);
+  background: var(--color-warning-bg);
+}
+
+.sensitivity-table .sens-cell--red {
+  color: var(--color-danger);
+  background: var(--color-danger-bg);
+}
+
+.sensitivity-table .sens-cell--base {
+  border: 2px solid var(--accent-primary);
+  font-weight: 700;
+}
+
+/* ─── Reverse DCF Bar ──────────────────────────────────────────── */
+.reverse-dcf-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.reverse-dcf-bar__track {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.reverse-dcf-bar__fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+/* ─── Sparklines (mobile) ──────────────────────────────────────── */
+.sparkline-container {
+  display: none;
+}
+
+.sparkline-bar {
+  display: inline-block;
+  width: 6px;
+  margin: 0 1px;
+  border-radius: 2px 2px 0 0;
+  vertical-align: bottom;
+  transition: height 0.3s ease;
+}
+
+@media (max-width: 500px) {
+  .metrics-table-container {
+    display: none;
+  }
+  .sparkline-container {
+    display: block;
+  }
+  .scorecard {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .scorecard__item:nth-child(4),
+  .scorecard__item:nth-child(5) {
+    grid-column: span 1;
+  }
+  .detail-tab {
+    font-size: 0.68rem;
+    padding: 8px 4px;
+  }
+}
+
+@media (max-width: 360px) {
+  .scorecard {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* ─── Scatter Plot ─────────────────────────────────────────────── */
+.scatter-container {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+
+.scatter-container__title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-sm);
+}
+
+.scatter-canvas {
+  width: 100%;
+  height: 250px;
+  display: block;
+}
+
+/* ─── Confidence Badge ─────────────────────────────────────────── */
+.confidence-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.02em;
+}
+
+.confidence-badge--high {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.confidence-badge--medium {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+.confidence-badge--low {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}
+
+/* ─── SBC Warning Badge ────────────────────────────────────────── */
+.sbc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
 

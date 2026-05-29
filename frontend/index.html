@@ -69,6 +69,12 @@
         <!-- Dynamic content -->
       </div>
 
+      <!-- Scatter Plot (portfolio radar) -->
+      <div class="scatter-container" id="scatter-container" style="display: none;">
+        <div class="scatter-container__title">📊 Radar de Cartera — ROIC vs Margen de Seguridad</div>
+        <canvas id="scatter-canvas" class="scatter-canvas"></canvas>
+      </div>
+
       <button class="btn-add" onclick="openAddModal()">
         <span>+</span> Añadir Ticker
       </button>
@@ -214,6 +220,7 @@
           <button class="filter-chip" id="chip-valuation" onclick="filterWikiCategory('valuation')">🧮 Valoración</button>
           <button class="filter-chip" id="chip-qualitative" onclick="filterWikiCategory('qualitative')">🔍 Cualitativo</button>
           <button class="filter-chip" id="chip-strategy" onclick="filterWikiCategory('strategy')">🚦 Estrategia</button>
+          <button class="filter-chip" id="chip-growth" onclick="filterWikiCategory('growth')">🚀 Growth</button>
         </div>
       </div>
 

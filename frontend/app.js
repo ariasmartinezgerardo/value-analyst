@@ -86,7 +86,7 @@ function getTrendEmoji(trend) {
 
 function getSemaforoClass(status) {
   if (!status) return 'neutral';
-  if (status.includes('STRONG BUY') || status.includes('CALIDAD')) return 'strong-buy';
+  if (status.includes('STRONG BUY') || status.includes('CALIDAD') || status.includes('GROWTH BUY')) return 'strong-buy';
   if (status.includes('SOBREVALORADA')) return 'overvalued';
   if (status.includes('NO ELEGIBLE')) return 'no-eligible';
   return 'neutral';
@@ -94,7 +94,7 @@ function getSemaforoClass(status) {
 
 function getSemaforoEmoji(status) {
   if (!status) return '⚪';
-  if (status.includes('STRONG BUY') || status.includes('CALIDAD')) return '🟢';
+  if (status.includes('STRONG BUY') || status.includes('CALIDAD') || status.includes('GROWTH BUY')) return '🟢';
   if (status.includes('SOBREVALORADA')) return '🔴';
   if (status.includes('NO ELEGIBLE')) return '🚫';
   return '🟡';
@@ -103,6 +103,7 @@ function getSemaforoEmoji(status) {
 function getSemaforoMeaning(status) {
   if (!status) return 'No hay datos de valoración.';
   if (status.includes('STRONG BUY')) return 'Convergencia total. Empresa barata por fundamentales (DCF/Graham) e históricamente.';
+  if (status.includes('GROWTH BUY')) return 'Metodología Growth: PEG < 1 (infravalorada para su crecimiento) + Rule of 40 > 40 (calidad SaaS/tech premium).';
   if (status.includes('COMPRA DE CALIDAD')) return 'Caso Ferrari: Empresa de extraordinaria calidad (Wide Moat y excelente directiva) cotizando a un precio razonable.';
   if (status.includes('SOBREVALORADA')) return 'Precio excesivo, alto riesgo de corrección por fundamentales y valoración histórica.';
   if (status.includes('NO ELEGIBLE')) return 'No elegible. Reportes no transparentes o EBITDA Ajustado manipulado (>30% de divergencia).';
@@ -112,7 +113,10 @@ function getSemaforoMeaning(status) {
 // ─── API Calls ──────────────────────────────────────────────────
 
 function getHeaders() {
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = { 
+    'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true'
+  };
   if (state.token) headers['Authorization'] = `Bearer ${state.token}`;
   return headers;
 }
@@ -258,6 +262,8 @@ function renderPortfolio() {
       'Cartera vacía', 
       'Añade tickers para empezar a analizar empresas con criterios de inversión en valor.'
     );
+    const scatterEl = document.getElementById('scatter-container');
+    if (scatterEl) scatterEl.style.display = 'none';
     return;
   }
 
@@ -265,6 +271,7 @@ function renderPortfolio() {
   for (const item of state.portfolio) {
     const mosBadge = getMosBadgeClass(item.margen_seguridad);
     const mosText = item.margen_seguridad !== null ? formatPercent(item.margen_seguridad) : 'Sin datos';
+    const archetypeShort = item.archetype_label ? item.archetype_label.split(' ')[0] : '';
     
     html += `
       <div class="card card--clickable" onclick="navigate('detail', {ticker: '${item.ticker}'})">
@@ -273,17 +280,28 @@ function renderPortfolio() {
           <div class="portfolio-card__info">
             <span class="portfolio-card__ticker">${getSemaforoEmoji(item.estado_semaforo)} ${item.ticker}</span>
             <span class="portfolio-card__name">${item.empresa || 'Cargando...'}</span>
-            <span style="font-size: 0.7rem; color: var(--text-muted); margin-top: 2px;">${item.calidad || ''}</span>
+            <span style="font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">${archetypeShort} ${item.sector ? '· ' + item.sector : ''}</span>
           </div>
           <div class="portfolio-card__metrics">
             <span class="portfolio-card__price">${item.precio_mercado ? formatCurrency(item.precio_mercado) : '—'}</span>
             <span class="portfolio-card__mos ${mosBadge}">MoS: ${mosText}</span>
+            <span style="font-size: 0.62rem; color: var(--text-muted);">${item.calidad || ''}</span>
           </div>
         </div>
       </div>
     `;
   }
   container.innerHTML = html;
+
+  // Render scatter plot if 2+ items with data
+  const scatterEl = document.getElementById('scatter-container');
+  const itemsWithData = state.portfolio.filter(p => p.roic_current != null && p.margen_seguridad != null);
+  if (scatterEl && itemsWithData.length >= 2) {
+    scatterEl.style.display = 'block';
+    setTimeout(renderScatterPlot, 100);
+  } else if (scatterEl) {
+    scatterEl.style.display = 'none';
+  }
 }
 
 async function executeUpdate() {
@@ -400,7 +418,6 @@ async function loadCompanyDetail(ticker) {
 function renderCompanyDetail(d) {
   const container = document.getElementById('detail-content');
   const cur = d.currency || 'USD';
-  
   const mosColor = getMosColor(d.margen_seguridad);
 
   // Dividend yield display with sanity check
@@ -410,7 +427,24 @@ function renderCompanyDetail(d) {
   } else if (d.dividend_yield) {
     divYieldDisplay = formatPercent(d.dividend_yield * 100);
   }
-  
+
+  // Scorecard signal helpers
+  const roicSignal = d.roic_current > 20 ? '🟢' : d.roic_current > 12 ? '🟡' : '🔴';
+  const fcfSignal = d.fcf_trend === '↑' ? '🟢' : d.fcf_trend === '→' ? '🟡' : '🔴';
+  const mosSignal = d.margen_seguridad > 15 ? '🟢' : d.margen_seguridad > 0 ? '🟡' : '🔴';
+  const debtSignal = d.net_debt_ebitda != null ? (d.net_debt_ebitda < 2 ? '🟢' : d.net_debt_ebitda < 4 ? '🟡' : '🔴') : '⚪';
+  const qualSignal = d.calidad && d.calidad.includes('⭐') ? '🟢' : d.calidad && d.calidad.includes('✅') ? '🟡' : '🔴';
+
+  // Growth source badge
+  const gsClass = d.growth_source === 'analyst' ? 'high' : d.growth_source === 'eps_cagr' ? 'medium' : 'low';
+  const gsLabel = d.growth_source === 'analyst' ? 'Analistas' : d.growth_source === 'eps_cagr' ? 'CAGR EPS' : 'Por defecto';
+
+  // SBC percentage
+  let sbcPct = null;
+  if (d.sbc_values && d.sbc_values[0] && d.fcf_ttm_pre_sbc && d.fcf_ttm_pre_sbc > 0) {
+    sbcPct = (d.sbc_values[0] / d.fcf_ttm_pre_sbc) * 100;
+  }
+
   container.innerHTML = `
     <!-- Header -->
     <div class="detail-header">
@@ -425,18 +459,42 @@ function renderCompanyDetail(d) {
       </div>
     </div>
 
-    <!-- Archetype Badge -->
-    ${d.archetype_label ? `
-      <div style="display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-bottom: var(--space-md); align-items: center;">
-        <span class="badge--positive" style="font-size: 0.72rem; padding: 4px 10px; border-radius: 20px; font-weight: 700;">${d.archetype_label}</span>
-        <span style="font-size: 0.68rem; color: var(--text-tertiary);">WACC: ${d.wacc_used ? formatPercent(d.wacc_used * 100) : '10%'} · ${cur}</span>
-        ${d.valuation_models_used ? `<span style="font-size: 0.68rem; color: var(--text-tertiary);">· Modelos: ${d.valuation_models_used.join(', ')}</span>` : ''}
-      </div>
-    ` : ''}
+    <!-- Archetype & Methodology Badges -->
+    <div style="display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-bottom: var(--space-sm); align-items: center;">
+      ${d.archetype_label ? `<span class="badge--positive" style="font-size: 0.72rem; padding: 4px 10px; border-radius: 20px; font-weight: 700;">${d.archetype_label}</span>` : ''}
+      ${d.methodology_label ? `<span style="background: var(--surface-hover); color: var(--text-secondary); border: 1px solid var(--border-subtle); font-size: 0.72rem; padding: 4px 10px; border-radius: 20px; font-weight: 700;">${d.methodology_label}</span>` : ''}
+      <span style="font-size: 0.68rem; color: var(--text-tertiary);">WACC: ${d.wacc_used ? formatPercent(d.wacc_used * 100) : '10%'} · ${cur}</span>
+      <span class="confidence-badge confidence-badge--${gsClass}">📊 ${gsLabel}</span>
+      ${d.beta ? `<span style="font-size: 0.68rem; color: var(--text-tertiary);">β ${d.beta.toFixed(2)}</span>` : ''}
+    </div>
 
-    <!-- TradingView Chart -->
-    <div class="card" style="padding: 0; overflow: hidden; height: 350px; margin-bottom: var(--space-md); border-radius: var(--radius-md);">
-      <div id="tv_chart_container" style="height: 100%; width: 100%;"></div>
+    <!-- Scorecard -->
+    <div class="scorecard">
+      <div class="scorecard__item">
+        <span class="scorecard__label">ROIC</span>
+        <span class="scorecard__value">${d.roic_current != null ? formatPercent(d.roic_current) : '—'}</span>
+        <span class="scorecard__signal">${roicSignal}</span>
+      </div>
+      <div class="scorecard__item">
+        <span class="scorecard__label">FCF</span>
+        <span class="scorecard__value">${getTrendEmoji(d.fcf_trend)}</span>
+        <span class="scorecard__signal">${fcfSignal}</span>
+      </div>
+      <div class="scorecard__item">
+        <span class="scorecard__label">MoS</span>
+        <span class="scorecard__value" style="color: ${mosColor}">${d.margen_seguridad != null ? formatPercent(d.margen_seguridad) : '—'}</span>
+        <span class="scorecard__signal">${mosSignal}</span>
+      </div>
+      <div class="scorecard__item">
+        <span class="scorecard__label">Deuda</span>
+        <span class="scorecard__value">${d.net_debt_ebitda != null ? formatNumber(d.net_debt_ebitda, 1) + 'x' : '—'}</span>
+        <span class="scorecard__signal">${debtSignal}</span>
+      </div>
+      <div class="scorecard__item">
+        <span class="scorecard__label">Calidad</span>
+        <span class="scorecard__value" style="font-size: 0.7rem;">${d.calidad ? d.calidad.split(' ')[0] : '—'}</span>
+        <span class="scorecard__signal">${qualSignal}</span>
+      </div>
     </div>
 
     <!-- Non-GAAP Flag -->
@@ -447,236 +505,306 @@ function renderCompanyDetail(d) {
       </div>
     ` : ''}
 
-    <!-- Metrics Table -->
-    <div class="card" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
-      <table class="metrics-table">
-        <thead>
-          <tr>
-            <th>Métrica</th>
-            ${(d.fiscal_dates || []).map(dateStr => {
-              try {
-                return `<th>${dateStr.split('-')[0]}</th>`;
-              } catch(e) {
-                return `<th>${dateStr}</th>`;
-              }
-            }).reverse().join('')}
-            <th>Actual/TTM</th>
-            <th>Tend.</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td class="metrics-table__metric">EPS</td>
-            ${(d.eps_values || []).map(val => `<td class="metrics-table__value">${formatCurrency(val, cur)}</td>`).reverse().join('')}
-            <td class="metrics-table__value">${formatCurrency(d.eps_ttm, cur)}</td>
-            <td class="metrics-table__trend">${getTrendEmoji(d.eps_trend)}</td>
-          </tr>
-          <tr>
-            <td class="metrics-table__metric">FCF Real</td>
-            ${(d.fcf_real_values || []).map(val => `<td class="metrics-table__value">${formatLargeNumber(val)}</td>`).reverse().join('')}
-            <td class="metrics-table__value">${formatLargeNumber(d.fcf_real_ttm)}</td>
-            <td class="metrics-table__trend">${getTrendEmoji(d.fcf_trend)}</td>
-          </tr>
-          <tr>
-            <td class="metrics-table__metric">ROIC</td>
-            ${(d.roic_values || []).map(val => `<td class="metrics-table__value">${formatPercent(val)}</td>`).reverse().join('')}
-            <td class="metrics-table__value">${formatPercent(d.roic_current)}</td>
-            <td class="metrics-table__trend">${getTrendEmoji(d.roic_trend)}</td>
-          </tr>
-          <tr>
-            <td class="metrics-table__metric">PER</td>
-            ${(d.per_history || []).map(val => `<td class="metrics-table__value">${val ? formatNumber(val, 1) + 'x' : '—'}</td>`).reverse().join('')}
-            <td class="metrics-table__value">${formatNumber(d.per_actual, 1)}x</td>
-            <td class="metrics-table__trend">—</td>
-          </tr>
-          <tr>
-            <td class="metrics-table__metric">EV/FCF</td>
-            ${(d.ev_fcf_history || []).map(val => `<td class="metrics-table__value">${val ? formatNumber(val, 1) + 'x' : '—'}</td>`).reverse().join('')}
-            <td class="metrics-table__value">${formatNumber(d.ev_fcf_actual, 1)}x</td>
-            <td class="metrics-table__trend">—</td>
-          </tr>
-        </tbody>
-      </table>
+    <!-- Tabs Navigation -->
+    <div class="detail-tabs">
+      <button class="detail-tab active" onclick="switchDetailTab('resumen', this)">📊 Resumen</button>
+      <button class="detail-tab" onclick="switchDetailTab('metricas', this)">📈 Métricas</button>
+      <button class="detail-tab" onclick="switchDetailTab('valoracion', this)">💎 Valoración</button>
+      <button class="detail-tab" onclick="switchDetailTab('cualitativo', this)">🔍 Cualitativo</button>
     </div>
 
-    <!-- Semáforo Card -->
-    <div class="card semaforo-card semaforo-card--${getSemaforoClass(d.estado_semaforo)}">
-      <div class="semaforo-card__icon">${getSemaforoEmoji(d.estado_semaforo)}</div>
-      <div class="semaforo-card__content">
-        <div class="semaforo-card__status">${d.estado_semaforo || 'SIN CLASIFICAR'}</div>
-        <div class="responsive-metrics-grid">
-          <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-            <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Fundamentales (DCF)</div>
-            <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_absoluto >= 0 ? 'var(--color-success)' : 'var(--color-danger)'};">
-              ${d.ms_absoluto >= 0 ? 'Descuento: ' + formatPercent(d.ms_absoluto) : 'Sobreprecio: ' + formatPercent(Math.abs(d.ms_absoluto))}
+    <!-- TAB: Resumen -->
+    <div id="tab-resumen" class="detail-tab-content active">
+      <!-- Semáforo Card -->
+      <div class="card semaforo-card semaforo-card--${getSemaforoClass(d.estado_semaforo)}">
+        <div class="semaforo-card__icon">${getSemaforoEmoji(d.estado_semaforo)}</div>
+        <div class="semaforo-card__content">
+          <div class="semaforo-card__status">${d.estado_semaforo || 'SIN CLASIFICAR'}</div>
+          ${d.methodology === 'growth' ? `
+          <div class="responsive-metrics-grid" style="margin-bottom: var(--space-sm);">
+            <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase;">PEG Ratio</div>
+              <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.peg_signal === 'undervalued' ? 'var(--color-success)' : d.peg_signal === 'fair' ? '#fbbf24' : 'var(--color-danger)'};">
+                ${d.peg_forward != null ? d.peg_forward + 'x' : (d.peg_trailing != null ? d.peg_trailing + 'x' : 'N/A')}
+              </div>
+            </div>
+            <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase;">Regla del 40</div>
+              <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.rule_of_40 >= 40 ? 'var(--color-success)' : d.rule_of_40 >= 20 ? '#fbbf24' : 'var(--color-danger)'};">
+                ${d.rule_of_40 != null ? d.rule_of_40.toFixed(1) : 'N/A'}
+              </div>
             </div>
           </div>
-          <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-            <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">Histórico (${d.multiple_type || 'N/A'})</div>
-            <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_relativo >= 0 ? 'var(--color-success)' : 'var(--color-warning)'};">
-              ${d.ms_relativo >= 0 ? 'Descuento: ' + formatPercent(d.ms_relativo) : 'Sobreprecio: ' + formatPercent(Math.abs(d.ms_relativo))}
+          ` : d.methodology !== 'speculative' ? `
+          <div class="responsive-metrics-grid">
+            <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase;">Fundamentales (DCF)</div>
+              <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_absoluto >= 0 ? 'var(--color-success)' : 'var(--color-danger)'};">
+                ${d.ms_absoluto >= 0 ? 'Descuento: ' + formatPercent(d.ms_absoluto) : 'Sobreprecio: ' + formatPercent(Math.abs(d.ms_absoluto))}
+              </div>
+            </div>
+            <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+              <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase;">Histórico (${d.multiple_type || 'N/A'})</div>
+              <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_relativo >= 0 ? 'var(--color-success)' : 'var(--color-warning)'};">
+                ${d.ms_relativo >= 0 ? 'Descuento: ' + formatPercent(d.ms_relativo) : 'Sobreprecio: ' + formatPercent(Math.abs(d.ms_relativo))}
+              </div>
             </div>
           </div>
+          ` : `
+          <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: var(--space-sm);">
+            Empresa sin beneficios y crecimiento insuficiente para justificar una valoración fiable. Riesgo muy alto.
+          </div>
+          `}
+          <div class="semaforo-card__meaning">${getSemaforoMeaning(d.estado_semaforo)}</div>
         </div>
-        <div class="semaforo-card__meaning">
-          ${getSemaforoMeaning(d.estado_semaforo)}
+      </div>
+
+      <!-- Chart -->
+      <div class="card" style="padding: 0; overflow: hidden; height: 350px; margin-bottom: var(--space-md); border-radius: var(--radius-md);">
+        <div id="tv_chart_container" style="height: 100%; width: 100%;"></div>
+      </div>
+
+      <!-- Investment Thesis -->
+      ${d.thesis ? `
+        <div class="thesis-box">
+          <div class="thesis-box__title">📝 TESIS DE INVERSIÓN</div>
+          <div class="thesis-box__text">${d.thesis}</div>
         </div>
+      ` : ''}
+    </div>
+
+    <!-- TAB: Métricas -->
+    <div id="tab-metricas" class="detail-tab-content">
+      <!-- Sparklines (mobile) -->
+      <div class="sparkline-container">
+        ${renderSparklineRow('FCF Real', d.fcf_real_values, d.fcf_trend)}
+        ${renderSparklineRow('ROIC', d.roic_values, d.roic_trend, true)}
+        ${d.eps_values ? renderSparklineRow('EPS', d.eps_values, d.eps_trend) : ''}
+      </div>
+
+      <!-- Metrics Table -->
+      <div class="card metrics-table-container" style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+        <table class="metrics-table">
+          <thead>
+            <tr>
+              <th>Métrica</th>
+              ${(d.fiscal_dates || []).map(dateStr => {
+                try { return `<th>${dateStr.split('-')[0]}</th>`; }
+                catch(e) { return `<th>${dateStr}</th>`; }
+              }).reverse().join('')}
+              <th>Actual/TTM</th>
+              <th>Tend.</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="metrics-table__metric">EPS</td>
+              ${(d.eps_values || []).map(val => `<td class="metrics-table__value">${formatCurrency(val, cur)}</td>`).reverse().join('')}
+              <td class="metrics-table__value">${formatCurrency(d.eps_ttm, cur)}</td>
+              <td class="metrics-table__trend">${getTrendEmoji(d.eps_trend)}</td>
+            </tr>
+            <tr>
+              <td class="metrics-table__metric">FCF Real</td>
+              ${(d.fcf_real_values || []).map(val => `<td class="metrics-table__value">${formatLargeNumber(val)}</td>`).reverse().join('')}
+              <td class="metrics-table__value">${formatLargeNumber(d.fcf_real_ttm)}</td>
+              <td class="metrics-table__trend">${getTrendEmoji(d.fcf_trend)}</td>
+            </tr>
+            ${d.sbc_values && d.sbc_values.some(v => v > 0) ? `
+            <tr>
+              <td class="metrics-table__metric" style="color: var(--color-warning);">SBC ⚠️</td>
+              ${(d.sbc_values || []).map(val => `<td class="metrics-table__value" style="color: var(--color-warning);">${formatLargeNumber(val)}</td>`).reverse().join('')}
+              <td class="metrics-table__value" style="color: var(--color-warning);">${d.sbc_values[0] ? formatLargeNumber(d.sbc_values[0]) : '—'}</td>
+              <td class="metrics-table__trend">—</td>
+            </tr>
+            ` : ''}
+            <tr>
+              <td class="metrics-table__metric">ROIC</td>
+              ${(d.roic_values || []).map(val => `<td class="metrics-table__value">${formatPercent(val)}</td>`).reverse().join('')}
+              <td class="metrics-table__value">${formatPercent(d.roic_current)}</td>
+              <td class="metrics-table__trend">${getTrendEmoji(d.roic_trend)}</td>
+            </tr>
+            <tr>
+              <td class="metrics-table__metric">PER</td>
+              ${(d.per_history || []).map(val => `<td class="metrics-table__value">${val ? formatNumber(val, 1) + 'x' : '—'}</td>`).reverse().join('')}
+              <td class="metrics-table__value">${formatNumber(d.per_actual, 1)}x</td>
+              <td class="metrics-table__trend">—</td>
+            </tr>
+            <tr>
+              <td class="metrics-table__metric">EV/FCF</td>
+              ${(d.ev_fcf_history || []).map(val => `<td class="metrics-table__value">${val ? formatNumber(val, 1) + 'x' : '—'}</td>`).reverse().join('')}
+              <td class="metrics-table__value">${formatNumber(d.ev_fcf_actual, 1)}x</td>
+              <td class="metrics-table__trend">—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      ${sbcPct && sbcPct > 10 ? `
+        <div class="sbc-badge" style="margin-bottom: var(--space-md);">⚠️ SBC = ${sbcPct.toFixed(0)}% del FCF pre-SBC — compensación en acciones significativa</div>
+      ` : ''}
+
+      <!-- Margins and Debt -->
+      <div class="responsive-metrics-grid">
+        <div class="card">
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">📊 RENTABILIDAD</div>
+          <div class="info-row"><span class="info-row__label">Margen Bruto</span><span class="info-row__value">${d.current_gross_margin != null ? formatPercent(d.current_gross_margin * 100) : '—'}</span></div>
+          <div class="info-row"><span class="info-row__label">Margen Operativo</span><span class="info-row__value">${d.current_operating_margin != null ? formatPercent(d.current_operating_margin * 100) : '—'}</span></div>
+          <div class="info-row"><span class="info-row__label">Margen Neto</span><span class="info-row__value">${d.current_net_margin != null ? formatPercent(d.current_net_margin * 100) : '—'}</span></div>
+        </div>
+        <div class="card">
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">🏦 DEUDA</div>
+          <div class="info-row"><span class="info-row__label">Interest Coverage</span><span class="info-row__value" style="color: ${d.interest_coverage != null && d.interest_coverage < 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.interest_coverage != null ? (d.interest_coverage > 900 ? 'Sin Deuda' : formatNumber(d.interest_coverage, 1) + 'x') : '—'}</span></div>
+          <div class="info-row"><span class="info-row__label">Net Debt / EBITDA</span><span class="info-row__value" style="color: ${d.net_debt_ebitda != null && d.net_debt_ebitda > 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.net_debt_ebitda != null ? formatNumber(d.net_debt_ebitda, 1) + 'x' : '—'}</span></div>
+        </div>
+      </div>
+
+      <!-- Additional Info -->
+      <div class="card">
+        <div class="info-row"><span class="info-row__label">Market Cap</span><span class="info-row__value">${formatLargeNumber(d.market_cap)}</span></div>
+        <div class="info-row"><span class="info-row__label">Industria</span><span class="info-row__value" style="font-family: var(--font-main); font-size: 0.8rem;">${d.industry || '—'}</span></div>
+        <div class="info-row"><span class="info-row__label">Div. Yield</span><span class="info-row__value">${divYieldDisplay}</span></div>
+        <div class="info-row"><span class="info-row__label">Crecimiento Est.</span><span class="info-row__value">${d.growth_rate ? formatPercent(d.growth_rate * 100) : '—'}</span></div>
+        ${d.beta ? `<div class="info-row"><span class="info-row__label">Beta (β)</span><span class="info-row__value" style="color: ${d.beta > 1.5 ? 'var(--color-danger)' : d.beta < 0.7 ? 'var(--color-info)' : 'var(--text-primary)'}">${d.beta.toFixed(2)}</span></div>` : ''}
+        <div class="info-row"><span class="info-row__label">Precio Objetivo Analistas</span><span class="info-row__value">${d.analyst_target ? formatCurrency(d.analyst_target, cur) : '—'}</span></div>
+        <div class="info-row"><span class="info-row__label">Modelos</span><span class="info-row__value">${d.valuation_models_used ? d.valuation_models_used.join(', ') : '—'}</span></div>
       </div>
     </div>
 
-    <!-- Phase 3: Margins and Debt Ratios -->
-    <div class="responsive-metrics-grid">
-      <div class="card">
-        <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">📊 RENTABILIDAD Y MÁRGENES</div>
-        <div class="info-row">
-          <span class="info-row__label">Margen Bruto</span>
-          <span class="info-row__value">${d.current_gross_margin != null ? formatPercent(d.current_gross_margin * 100) : '—'}</span>
+    <!-- TAB: Valoración -->
+    <div id="tab-valoracion" class="detail-tab-content">
+      ${d.methodology !== 'speculative' ? `
+      <!-- Valuation Box -->
+      <div class="valuation-box">
+        <div class="valuation-box__title">💎 VALORACIÓN INTRÍNSECA</div>
+        ${d.graham_value && d.graham_value > 0 && d.methodology !== 'growth' ? `
+        <div class="valuation-box__row">
+          <span class="valuation-box__label">Graham</span>
+          <span class="valuation-box__value">${formatCurrency(d.graham_value, cur)}</span>
         </div>
-        <div class="info-row">
-          <span class="info-row__label">Margen Operativo</span>
-          <span class="info-row__value">${d.current_operating_margin != null ? formatPercent(d.current_operating_margin * 100) : '—'}</span>
+        ` : ''}
+        ${d.dcf_value && d.dcf_value > 0 ? `
+        <div class="valuation-box__row">
+          <span class="valuation-box__label">${d.archetype_id === 'hypergrowth' ? 'DCF Revenue' : d.archetype_id === 'compounder' ? 'DCF (Multi-Fase)' : 'DCF (10a)'}</span>
+          <span class="valuation-box__value">${formatCurrency(d.dcf_value, cur)}</span>
         </div>
-        <div class="info-row">
-          <span class="info-row__label">Margen Neto</span>
-          <span class="info-row__value">${d.current_net_margin != null ? formatPercent(d.current_net_margin * 100) : '—'}</span>
+        ` : ''}
+        ${d.alt_value && d.alt_model_name ? `
+        <div class="valuation-box__row">
+          <span class="valuation-box__label">${d.alt_model_name}</span>
+          <span class="valuation-box__value">${formatCurrency(d.alt_value, cur)}</span>
+        </div>
+        ` : ''}
+        <div class="valuation-box__row">
+          <span class="valuation-box__label">Precio Mercado</span>
+          <span class="valuation-box__value" style="color: var(--text-primary)">${formatCurrency(d.current_price, cur)}</span>
+        </div>
+        <div class="valuation-box__divider"></div>
+        <div class="valuation-box__mos">
+          <span class="valuation-box__mos-label">Margen de Seguridad</span>
+          <span class="valuation-box__mos-value" style="color: ${mosColor}">${formatPercent(d.margen_seguridad)}</span>
+        </div>
+        <div class="valuation-box__quality">
+          <span class="valuation-box__quality-label">Calidad</span>
+          <span class="valuation-box__quality-value">${d.calidad || '—'}</span>
         </div>
       </div>
-      <div class="card">
-        <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">🏦 SALUD FINANCIERA (DEUDA)</div>
-        <div class="info-row">
-          <span class="info-row__label" title="Cobertura de intereses (EBIT / Gastos Financieros). >3x es seguro.">Interest Coverage</span>
-          <span class="info-row__value" style="color: ${d.interest_coverage != null && d.interest_coverage < 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.interest_coverage != null ? (d.interest_coverage > 900 ? 'Sin Deuda' : formatNumber(d.interest_coverage, 1) + 'x') : '—'}</span>
+
+      <!-- Reverse DCF -->
+      ${d.implied_growth != null ? `
+      <div class="card" style="margin-bottom: var(--space-md);">
+        <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; margin-bottom: var(--space-sm);">🔄 Reverse DCF — Crecimiento Implícito en el Precio</div>
+        <div class="reverse-dcf-bar">
+          <span style="font-size: 0.75rem; color: var(--text-secondary); min-width: 60px;">Estimado</span>
+          <div class="reverse-dcf-bar__track">
+            <div class="reverse-dcf-bar__fill" style="width: ${Math.min(Math.max(d.growth_rate * 100 / 50 * 100, 5), 100)}%; background: var(--accent-primary);"></div>
+          </div>
+          <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: var(--accent-primary); min-width: 50px; text-align: right;">${formatPercent(d.growth_rate * 100)}</span>
         </div>
-        <div class="info-row">
-          <span class="info-row__label" title="Net Debt / EBITDA. <3x es seguro.">Net Debt / EBITDA</span>
-          <span class="info-row__value" style="color: ${d.net_debt_ebitda != null && d.net_debt_ebitda > 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.net_debt_ebitda != null ? formatNumber(d.net_debt_ebitda, 1) + 'x' : '—'}</span>
+        <div class="reverse-dcf-bar">
+          <span style="font-size: 0.75rem; color: var(--text-secondary); min-width: 60px;">Implícito</span>
+          <div class="reverse-dcf-bar__track">
+            <div class="reverse-dcf-bar__fill" style="width: ${Math.min(Math.max(d.implied_growth * 100 / 50 * 100, 5), 100)}%; background: ${d.implied_growth > d.growth_rate * 1.3 ? 'var(--color-danger)' : d.implied_growth < d.growth_rate * 0.7 ? 'var(--color-success)' : '#fbbf24'};"></div>
+          </div>
+          <span style="font-family: var(--font-mono); font-size: 0.85rem; font-weight: 700; color: ${d.implied_growth > d.growth_rate * 1.3 ? 'var(--color-danger)' : d.implied_growth < d.growth_rate * 0.7 ? 'var(--color-success)' : '#fbbf24'}; min-width: 50px; text-align: right;">${formatPercent(d.implied_growth * 100)}</span>
+        </div>
+        <div style="font-size: 0.72rem; color: var(--text-tertiary); margin-top: var(--space-xs);">
+          ${d.implied_growth > d.growth_rate * 1.5 ? '⚠️ El mercado descuenta un crecimiento mucho mayor al estimado — optimismo excesivo.' :
+            d.implied_growth < d.growth_rate * 0.5 ? '💎 El mercado descuenta un crecimiento bajo — posible oportunidad si los fundamentales se mantienen.' :
+            'El mercado descuenta un crecimiento cercano al estimado — valoración razonable.'}
         </div>
       </div>
+      ` : ''}
+
+      <!-- Sensitivity Table -->
+      ${d.sensitivity ? `
+      <div class="card" style="margin-bottom: var(--space-md);">
+        <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; margin-bottom: var(--space-sm);">📐 TABLA DE SENSIBILIDAD (Valor Intrínseco por Acción)</div>
+        <div style="overflow-x: auto;">
+          <table class="sensitivity-table">
+            <thead>
+              <tr>
+                <th>WACC \\ Growth</th>
+                ${d.sensitivity.growth_values.map(g => `<th>${(g * 100).toFixed(0)}%</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${d.sensitivity.wacc_values.map((w, wi) =>
+                `<tr>
+                  <td style="font-weight: 700; color: var(--text-secondary);">${(w * 100).toFixed(0)}%</td>
+                  ${d.sensitivity.matrix[wi].map((val, gi) => {
+                    const isBase = wi === 1 && gi === 1;
+                    const cls = val > d.current_price * 1.15 ? 'sens-cell--green' : val > d.current_price * 0.85 ? 'sens-cell--yellow' : 'sens-cell--red';
+                    return `<td class="${cls} ${isBase ? 'sens-cell--base' : ''}">${formatCurrency(val, cur)}</td>`;
+                  }).join('')}
+                </tr>`
+              ).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: var(--space-xs);">Precio actual: ${formatCurrency(d.current_price, cur)} · Centro = caso base · Verde = infravalorada · Rojo = sobrevalorada</div>
+      </div>
+      ` : ''}
+      ` : `
+      <div class="card">
+        <div style="text-align: center; padding: var(--space-lg); color: var(--text-tertiary);">
+          ⚠️ Empresa clasificada como especulativa — sin modelos de valoración fiables disponibles.
+        </div>
+      </div>
+      `}
     </div>
 
-    <!-- Qualitative Audit Accordion -->
-    ${d.qualitative_audit ? `
-      <div class="card qualitative-accordion" id="qualitative-card" onclick="toggleQualitativeReport()" style="cursor: pointer; border: 1px solid var(--border-subtle); transition: all var(--transition-base); margin-bottom: var(--space-md);">
-        <div class="qualitative-accordion__header" style="display: flex; justify-content: space-between; align-items: center;">
-          <span style="font-weight: 700; font-size: 0.9rem; color: var(--gold);">🔍 Informe Cualitativo de Auditoría</span>
-          <span id="qualitative-icon" style="font-size: 1.1rem; color: var(--text-tertiary); transition: transform 0.2s;">+</span>
+    <!-- TAB: Cualitativo -->
+    <div id="tab-cualitativo" class="detail-tab-content">
+      ${d.qualitative_audit ? `
+        <div class="card" style="margin-bottom: var(--space-md);">
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-primary); text-transform: uppercase; margin-bottom: 2px;">🛡️ Análisis de Foso (Moat)</div>
+          <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--accent-primary);">
+            <strong>${d.qualitative_audit.moat_strength}</strong>: ${d.qualitative_audit.moat_details}
+          </div>
         </div>
         
-        <div id="qualitative-content" style="display: none; margin-top: var(--space-md);">
-          <div style="height: 1px; background: var(--border-subtle); margin-bottom: var(--space-sm);"></div>
-          
-          <div class="qualitative-point" style="margin-bottom: var(--space-sm);">
-            <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-primary); text-transform: uppercase; margin-bottom: 2px;">🛡️ Análisis de Foso (Moat)</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--accent-primary);">
-              <strong>${d.qualitative_audit.moat_strength}</strong>: ${d.qualitative_audit.moat_details}
-            </div>
-          </div>
-          
-          <div class="qualitative-point" style="margin-bottom: var(--space-sm);">
-            <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-primary); text-transform: uppercase; margin-bottom: 2px;">💼 Directiva y Asignación de Capital</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--accent-primary);">
-              ${d.qualitative_audit.management_details}
-            </div>
-          </div>
-
-          <div class="qualitative-point" style="margin-bottom: var(--space-sm);">
-            <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-primary); text-transform: uppercase; margin-bottom: 2px;">🌐 Tamaño de Mercado y Crecimiento (TAM/SAM/SOM)</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--accent-primary);">
-              <strong>${d.qualitative_audit.growth_strength || 'Análisis de Crecimiento'}</strong>: ${d.qualitative_audit.growth_details || 'Estimando pista de crecimiento...'}
-            </div>
-          </div>
-          
-          <div class="qualitative-point">
-            <div style="font-size: 0.72rem; font-weight: 700; color: var(--color-danger); text-transform: uppercase; margin-bottom: 2px;">⚠️ Análisis de Riesgos y Gobernanza</div>
-            <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--color-danger);">
-              ${d.qualitative_audit.risk_details}
-            </div>
+        <div class="card" style="margin-bottom: var(--space-md);">
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-primary); text-transform: uppercase; margin-bottom: 2px;">💼 Directiva y Asignación de Capital</div>
+          <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--accent-primary);">
+            ${d.qualitative_audit.management_details}
           </div>
         </div>
-      </div>
-    ` : ''}
 
-    <!-- Additional Info -->
-    <div class="card">
-      <div class="info-row">
-        <span class="info-row__label">Market Cap</span>
-        <span class="info-row__value">${formatLargeNumber(d.market_cap)}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-row__label">Industria</span>
-        <span class="info-row__value" style="font-family: var(--font-main); font-size: 0.8rem;">${d.industry || '—'}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-row__label">Div. Yield</span>
-        <span class="info-row__value">${divYieldDisplay}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-row__label">Crecimiento Est.</span>
-        <span class="info-row__value">${d.growth_rate ? formatPercent(d.growth_rate * 100) : '—'}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-row__label">Precio Objetivo Analistas</span>
-        <span class="info-row__value">${d.analyst_target ? formatCurrency(d.analyst_target, cur) : '—'}</span>
-      </div>
-      <div class="info-row">
-        <span class="info-row__label">Moneda</span>
-        <span class="info-row__value">${cur}${d.financial_currency && d.financial_currency !== cur ? ' (Reporta en ' + d.financial_currency + ')' : ''}</span>
-      </div>
+        <div class="card" style="margin-bottom: var(--space-md);">
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--accent-primary); text-transform: uppercase; margin-bottom: 2px;">🌐 Tamaño de Mercado y Crecimiento (TAM)</div>
+          <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--accent-primary);">
+            <strong>${d.qualitative_audit.growth_strength || 'Análisis de Crecimiento'}</strong>: ${d.qualitative_audit.growth_details || ''}
+          </div>
+        </div>
+        
+        <div class="card" style="margin-bottom: var(--space-md);">
+          <div style="font-size: 0.72rem; font-weight: 700; color: var(--color-danger); text-transform: uppercase; margin-bottom: 2px;">⚠️ Análisis de Riesgos y Gobernanza</div>
+          <div style="font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; padding-left: var(--space-sm); border-left: 2px solid var(--color-danger);">
+            ${d.qualitative_audit.risk_details}
+          </div>
+        </div>
+      ` : '<div class="card"><div style="text-align: center; padding: var(--space-lg); color: var(--text-tertiary);">Sin datos cualitativos disponibles.</div></div>'}
     </div>
-
-    <!-- Valuation Box -->
-    <div class="valuation-box">
-      <div class="valuation-box__title">💎 VALORACIÓN INTRÍNSECA</div>
-      
-      ${d.graham_value && d.graham_value > 0 ? `
-      <div class="valuation-box__row">
-        <span class="valuation-box__label">Graham</span>
-        <span class="valuation-box__value">${formatCurrency(d.graham_value, cur)}</span>
-      </div>
-      ` : ''}
-      ${d.dcf_value && d.dcf_value > 0 ? `
-      <div class="valuation-box__row">
-        <span class="valuation-box__label">${
-          d.archetype_id === 'hypergrowth' ? 'DCF Revenue' :
-          d.archetype_id === 'compounder' ? 'DCF (Multi-Fase)' :
-          d.archetype_id === 'speculative' ? 'DCF (Tentativo)' :
-          'DCF (10a)'
-        }</span>
-        <span class="valuation-box__value">${formatCurrency(d.dcf_value, cur)}</span>
-      </div>
-      ` : ''}
-      ${d.alt_value && d.alt_model_name ? `
-      <div class="valuation-box__row">
-        <span class="valuation-box__label">${d.alt_model_name}</span>
-        <span class="valuation-box__value">${formatCurrency(d.alt_value, cur)}</span>
-      </div>
-      ` : ''}
-      <div class="valuation-box__row">
-        <span class="valuation-box__label">Precio Mercado</span>
-        <span class="valuation-box__value" style="color: var(--text-primary)">${formatCurrency(d.current_price, cur)}</span>
-      </div>
-      
-      <div class="valuation-box__divider"></div>
-      
-      <div class="valuation-box__mos">
-        <span class="valuation-box__mos-label">Margen de Seguridad</span>
-        <span class="valuation-box__mos-value" style="color: ${mosColor}">${formatPercent(d.margen_seguridad)}</span>
-      </div>
-      
-      <div class="valuation-box__quality">
-        <span class="valuation-box__quality-label">Calidad</span>
-        <span class="valuation-box__quality-value">${d.calidad || '—'}</span>
-      </div>
-    </div>
-
-    <!-- Investment Thesis -->
-    ${d.thesis ? `
-      <div class="thesis-box">
-        <div class="thesis-box__title">📝 TESIS DE INVERSIÓN</div>
-        <div class="thesis-box__text">${d.thesis}</div>
-      </div>
-      </div>
-    ` : ''}
   `;
 
   // Initialize TradingView Widget
@@ -698,6 +826,150 @@ function renderCompanyDetail(d) {
     });
   }
 }
+
+// ─── Tab Switching ──────────────────────────────────────────────
+
+function switchDetailTab(tabId, btn) {
+  document.querySelectorAll('.detail-tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.detail-tab').forEach(el => el.classList.remove('active'));
+  const target = document.getElementById('tab-' + tabId);
+  if (target) target.classList.add('active');
+  if (btn) btn.classList.add('active');
+}
+
+// ─── Sparkline Renderer ─────────────────────────────────────────
+
+function renderSparklineRow(label, values, trend, isPercent = false) {
+  if (!values || values.length === 0) return '';
+  const clean = values.filter(v => v != null);
+  if (clean.length === 0) return '';
+  const maxVal = Math.max(...clean.map(v => Math.abs(v)));
+  const barHeight = 40;
+  
+  const bars = [...values].reverse().map(v => {
+    if (v == null) return '<span class="sparkline-bar" style="height: 2px; background: var(--text-muted);"></span>';
+    const h = maxVal > 0 ? Math.max(2, Math.abs(v) / maxVal * barHeight) : 2;
+    const color = v >= 0 ? 'var(--color-success)' : 'var(--color-danger)';
+    return `<span class="sparkline-bar" style="height: ${h}px; background: ${color};"></span>`;
+  }).join('');
+
+  const latest = clean[0];
+  const display = isPercent ? formatPercent(latest) : formatLargeNumber(latest);
+
+  return `
+    <div class="card" style="margin-bottom: var(--space-sm); padding: var(--space-sm) var(--space-md);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary);">${label}</span>
+        <span style="font-family: var(--font-mono); font-size: 0.8rem; font-weight: 600; color: var(--text-primary);">${display} ${getTrendEmoji(trend)}</span>
+      </div>
+      <div style="height: ${barHeight}px; display: flex; align-items: flex-end;">${bars}</div>
+    </div>
+  `;
+}
+
+// ─── Scatter Plot Renderer ──────────────────────────────────────
+
+function renderScatterPlot() {
+  const canvasEl = document.getElementById('scatter-canvas');
+  if (!canvasEl) return;
+  
+  const items = state.portfolio.filter(p => p.roic_current != null && p.margen_seguridad != null);
+  if (items.length < 2) {
+    canvasEl.parentElement.style.display = 'none';
+    return;
+  }
+
+  const ctx = canvasEl.getContext('2d');
+  const W = canvasEl.parentElement.clientWidth - 32;
+  const H = 250;
+  canvasEl.width = W * window.devicePixelRatio;
+  canvasEl.height = H * window.devicePixelRatio;
+  canvasEl.style.width = W + 'px';
+  canvasEl.style.height = H + 'px';
+  ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+
+  const pad = { top: 20, right: 20, bottom: 30, left: 45 };
+  const chartW = W - pad.left - pad.right;
+  const chartH = H - pad.top - pad.bottom;
+
+  // Data ranges
+  const mosValues = items.map(i => i.margen_seguridad);
+  const roicValues = items.map(i => i.roic_current);
+  const mosMin = Math.min(...mosValues, -20);
+  const mosMax = Math.max(...mosValues, 40);
+  const roicMin = Math.min(...roicValues, 0);
+  const roicMax = Math.max(...roicValues, 30);
+
+  const scaleX = v => pad.left + ((v - mosMin) / (mosMax - mosMin)) * chartW;
+  const scaleY = v => pad.top + chartH - ((v - roicMin) / (roicMax - roicMin)) * chartH;
+
+  // Background
+  ctx.fillStyle = '#1f1f22';
+  ctx.fillRect(0, 0, W, H);
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = pad.top + (chartH / 4) * i;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W - pad.right, y); ctx.stroke();
+  }
+  // Zero line for MoS
+  if (mosMin < 0 && mosMax > 0) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    const zeroX = scaleX(0);
+    ctx.beginPath(); ctx.moveTo(zeroX, pad.top); ctx.lineTo(zeroX, H - pad.bottom); ctx.stroke();
+  }
+
+  // Axis labels
+  ctx.fillStyle = '#64748b';
+  ctx.font = '10px Outfit';
+  ctx.textAlign = 'center';
+  ctx.fillText('← Sobrevalorada | MoS (%) | Infravalorada →', W / 2, H - 5);
+  ctx.save();
+  ctx.translate(12, H / 2);
+  ctx.rotate(-Math.PI / 2);
+  ctx.fillText('ROIC (%)', 0, 0);
+  ctx.restore();
+
+  // Points
+  items.forEach(item => {
+    const x = scaleX(item.margen_seguridad);
+    const y = scaleY(item.roic_current);
+    const color = item.estado_semaforo && item.estado_semaforo.includes('🟢') ? '#22c55e' :
+                  item.estado_semaforo && item.estado_semaforo.includes('🔴') ? '#ef4444' : '#fbbf24';
+    
+    // Glow
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, Math.PI * 2);
+    ctx.fillStyle = color + '33';
+    ctx.fill();
+    
+    // Point
+    ctx.beginPath();
+    ctx.arc(x, y, 5, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+
+    // Label
+    ctx.fillStyle = '#f1f5f9';
+    ctx.font = '600 10px Outfit';
+    ctx.textAlign = 'center';
+    ctx.fillText(item.ticker, x, y - 10);
+  });
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ─── Explorer Profiles ───────────────────────────────────────────
 const exploreProfiles = {
@@ -879,7 +1151,10 @@ async function handleAuth(e) {
     // No usamos apiPost porque intercepta 401 y no incluye Authorization
     const res = await fetch(API_BASE + endpoint, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'ngrok-skip-browser-warning': 'true'
+      },
       body: JSON.stringify({ username, password })
     });
     const data = await res.json();
@@ -1293,6 +1568,33 @@ const wikiData = [
     concept: 'Un PER de 15x es barato para el sector Software (media 25x) pero es caro para el sector Bancario (media 12x). La aplicación almacena internamente las medianas de PER y ROIC de todos los sectores de la economía.',
     formula: '(Ratio Empresa - Media Sectorial) / Media Sectorial',
     utility: 'Proporciona contexto al instante. Se inyecta directamente en el Informe Cualitativo indicando si la empresa cotiza con prima o descuento sectorial y si su rentabilidad supera a sus rivales.'
+  },
+  {
+    id: 'peg-ratio',
+    category: 'growth',
+    title: '📊 PEG Ratio (Peter Lynch)',
+    short: 'Valoración relativa al crecimiento: ¿estás pagando demasiado por el crecimiento futuro?',
+    concept: 'Creado por el legendario gestor Peter Lynch (Fidelity Magellan Fund). El PEG ajusta el múltiplo PER por la tasa de crecimiento esperada del beneficio. Un PER de 50x puede parecer carísimo en análisis Value clásico, pero si la empresa crece al 50% anual, el PEG es 1.0 — precio justo. Es la metodología GARP (Growth at a Reasonable Price).',
+    formula: 'PEG = PER / Tasa de Crecimiento EPS (%)',
+    utility: 'PEG < 1.0 = Infravalorada para su crecimiento (oportunidad Growth). PEG ≈ 1.0-2.0 = Precio justo. PEG > 2.0 = Sobrevalorada incluso considerando su crecimiento. La app calcula PEG Trailing (PER actual) y PEG Forward (PER estimado por analistas).'
+  },
+  {
+    id: 'rule-of-40',
+    category: 'growth',
+    title: '🔥 Regla del 40 (Rule of 40)',
+    short: 'El estándar de oro para evaluar empresas SaaS y tecnológicas de alto crecimiento.',
+    concept: 'Originada en el mundo del capital riesgo (VC) de Silicon Valley. Suma el porcentaje de crecimiento de ventas y el margen de flujo de caja libre. La idea es que una empresa puede sacrificar rentabilidad si crece rápidamente, o viceversa, mientras la suma sea mayor que 40.',
+    formula: 'Rule of 40 = Crecimiento Revenue (%) + Margen FCF (%)',
+    utility: 'Score ≥ 40 = Premium (empresa élite que merece cotizar a múltiplos altos). Score 20-40 = Aceptable. Score < 20 = Débil (necesita mejorar crecimiento o rentabilidad). Útil para empresas como CrowdStrike, Shopify o Palantir donde el Value clásico falla.'
+  },
+  {
+    id: 'ev-revenue',
+    category: 'growth',
+    title: '💰 EV/Revenue (Enterprise Value sobre Ventas)',
+    short: 'Múltiplo de valoración basado en ventas, clave para empresas sin beneficios.',
+    concept: 'Cuando una empresa no tiene beneficios (EPS negativo) ni flujo de caja libre positivo, el PER y el DCF tradicional no funcionan. El EV/Revenue compara el valor total de la empresa (capitalización + deuda neta) contra sus ingresos. La app también calcula el EV/Revenue Forward a 3 años, proyectando las ventas futuras al ritmo de crecimiento actual.',
+    formula: 'EV/Revenue = Enterprise Value / Ingresos Totales Anuales',
+    utility: 'Permite comparar empresas de hipercrecimiento entre sí independientemente de su rentabilidad actual. Un EV/Revenue Forward de 5x es mucho más barato que uno de 20x. La proyección a 3 años muestra lo barata que puede estar una empresa si mantiene su ritmo de crecimiento.'
   }
 ];
 
