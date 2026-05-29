@@ -93,10 +93,11 @@
       <p class="page__subtitle">Escanea el mercado en busca de empresas infravaloradas de alta calidad</p>
       
       <div class="explorer-search">
-        <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1rem; width: 100%;">
-          <div>
-            <label for="explore-market" style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Mercado:</label>
-            <select id="explore-market" class="modal__input" style="width: 100%; cursor: pointer;">
+        <!-- Row 1: Market + Profile preset -->
+        <div class="explorer-row">
+          <div class="explorer-field">
+            <label for="explore-market">Mercado</label>
+            <select id="explore-market" class="modal__input">
               <optgroup label="🌍 Índices Globales">
                 <option value="sp500" selected>S&P 500 (EEUU)</option>
                 <option value="dowjones">Dow Jones (Clásicas EEUU)</option>
@@ -113,30 +114,112 @@
               </optgroup>
             </select>
           </div>
-          <div>
-            <label for="explore-profile" style="display: block; margin-bottom: 0.5rem; color: var(--text-secondary); font-size: 0.9rem;">Perfil de Búsqueda:</label>
-            <select id="explore-profile" class="modal__input" style="width: 100%; cursor: pointer;" onchange="updateExploreChips()">
-              <option value="moderate" selected>Moderado</option>
-              <option value="conservative">Conservador</option>
-              <option value="aggressive">Agresivo</option>
+          <div class="explorer-field">
+            <label for="explore-profile">Perfil Rápido</label>
+            <select id="explore-profile" class="modal__input" onchange="applyExploreProfile()">
+              <option value="moderate" selected>⚖️ Moderado</option>
+              <option value="conservative">🛡️ Conservador</option>
+              <option value="aggressive">🔥 Agresivo</option>
+              <option value="custom">✏️ Personalizado</option>
             </select>
           </div>
+        </div>
+
+        <!-- Row 2: Archetype + Sector filters -->
+        <div class="explorer-row">
+          <div class="explorer-field">
+            <label for="explore-archetype">Arquetipo</label>
+            <select id="explore-archetype" class="modal__input">
+              <option value="all" selected>Todos</option>
+              <option value="compounder">🚀 Compounder</option>
+              <option value="classic_value">🏛️ Value Clásico</option>
+              <option value="financial">🏦 Financiero</option>
+              <option value="reit_utility">🏠 REIT / Utility</option>
+              <option value="hypergrowth">🔥 Hipercrecimiento</option>
+            </select>
+          </div>
+          <div class="explorer-field">
+            <label for="explore-sector">Sector</label>
+            <select id="explore-sector" class="modal__input">
+              <option value="all" selected>Todos</option>
+              <option value="Technology">💻 Tecnología</option>
+              <option value="Healthcare">🏥 Healthcare</option>
+              <option value="Financial">🏦 Financiero</option>
+              <option value="Consumer">🛒 Consumo</option>
+              <option value="Industrials">🏭 Industrial</option>
+              <option value="Energy">⚡ Energía</option>
+              <option value="Communication">📡 Comunicaciones</option>
+              <option value="Real Estate">🏠 Inmobiliario</option>
+              <option value="Materials">🧱 Materiales</option>
+              <option value="Utilities">💡 Utilities</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Row 3: Adjustable filter sliders -->
+        <div class="explorer-sliders" id="explorer-sliders">
+          <div class="explorer-slider-group">
+            <div class="explorer-slider-header">
+              <label>PER máximo</label>
+              <span class="explorer-slider-value" id="slider-per-value">20x</span>
+            </div>
+            <input type="range" id="slider-per" class="explorer-slider" min="5" max="60" value="20" step="1"
+                   oninput="onSliderChange()">
+            <div class="explorer-slider-range"><span>5x</span><span>60x</span></div>
+          </div>
+          <div class="explorer-slider-group">
+            <div class="explorer-slider-header">
+              <label>ROIC mínimo</label>
+              <span class="explorer-slider-value" id="slider-roic-value">12%</span>
+            </div>
+            <input type="range" id="slider-roic" class="explorer-slider" min="0" max="30" value="12" step="1"
+                   oninput="onSliderChange()">
+            <div class="explorer-slider-range"><span>0%</span><span>30%</span></div>
+          </div>
+          <div class="explorer-slider-group">
+            <div class="explorer-slider-header">
+              <label>FCF Yield mín.</label>
+              <span class="explorer-slider-value" id="slider-fcf-value">5%</span>
+            </div>
+            <input type="range" id="slider-fcf" class="explorer-slider" min="0" max="15" value="5" step="1"
+                   oninput="onSliderChange()">
+            <div class="explorer-slider-range"><span>0%</span><span>15%</span></div>
+          </div>
+          <div class="explorer-slider-group">
+            <div class="explorer-slider-header">
+              <label>MoS mínimo</label>
+              <span class="explorer-slider-value" id="slider-mos-value">20%</span>
+            </div>
+            <input type="range" id="slider-mos" class="explorer-slider" min="-10" max="50" value="20" step="5"
+                   oninput="onSliderChange()">
+            <div class="explorer-slider-range"><span>-10%</span><span>50%</span></div>
+          </div>
+        </div>
+
+        <!-- Active filter chips -->
+        <div id="explorer-filters-container" class="explorer-filters">
+          <!-- Chips injected by JS -->
         </div>
 
         <button id="btn-explore" class="btn-explore" onclick="exploreOpportunities()">
           🔎 Buscar Oportunidades
         </button>
-        
-        <div id="explorer-filters-container" class="explorer-filters">
-          <!-- Chips injected by JS -->
-        </div>
+      </div>
+
+      <!-- Sort tabs -->
+      <div class="explorer-sort" id="explorer-sort" style="display: none;">
+        <span class="explorer-sort__label">Ordenar por:</span>
+        <button class="explorer-sort__btn active" data-sort="mos" onclick="sortExplorerResults('mos', this)">MoS ↓</button>
+        <button class="explorer-sort__btn" data-sort="roic" onclick="sortExplorerResults('roic', this)">ROIC ↓</button>
+        <button class="explorer-sort__btn" data-sort="fcf_yield" onclick="sortExplorerResults('fcf_yield', this)">FCF Yield ↓</button>
+        <button class="explorer-sort__btn" data-sort="per" onclick="sortExplorerResults('per', this)">PER ↑</button>
       </div>
 
       <div id="explorer-results">
         <div class="empty-state">
           <div class="empty-state__icon">🔎</div>
           <div class="empty-state__title">Descubre oportunidades</div>
-          <div class="empty-state__text">Selecciona un mercado y un perfil para escanear ~50 empresas con criterios de inversión en valor.</div>
+          <div class="empty-state__text">Configura los filtros y escanea el mercado. Ajusta los deslizadores para personalizar la búsqueda.</div>
         </div>
       </div>
     </div>

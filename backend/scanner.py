@@ -20,23 +20,32 @@ DEFAULT_CRITERIA = {
 }
 
 
-def scan_opportunities(criteria: dict = None, max_stocks: int = 20, market: str = 'sp500') -> list:
+def scan_opportunities(criteria: dict = None, max_stocks: int = 30,
+                       market: str = 'sp500',
+                       archetype_filter: str = None,
+                       sector_filter: str = None,
+                       sort_by: str = 'mos') -> list:
     """
     Scan the stock universe for value investing opportunities.
 
     Process:
     1. Fetch data for each stock in the universe
     2. Run full analysis
-    3. Filter by criteria
-    4. Generate investment thesis
-    5. Sort by margin of safety (highest first)
+    3. Filter by criteria (PER, ROIC, FCF Yield, MoS)
+    4. Optionally filter by archetype and/or sector
+    5. Generate investment thesis
+    6. Sort by chosen metric
 
     Args:
         criteria: Dict of filter criteria (uses defaults if None)
         max_stocks: Maximum number of results to return
+        market: Market universe to scan
+        archetype_filter: Optional archetype ID to filter ('compounder', 'classic_value', etc.)
+        sector_filter: Optional sector name to filter ('Technology', 'Healthcare', etc.)
+        sort_by: Sort key: 'mos' | 'roic' | 'fcf_yield' | 'per' | 'calidad'
 
     Returns:
-        List of opportunity dicts sorted by margin of safety
+        List of opportunity dicts sorted by chosen metric
     """
     if criteria is None:
         criteria = DEFAULT_CRITERIA
@@ -75,10 +84,22 @@ def scan_opportunities(criteria: dict = None, max_stocks: int = 20, market: str 
                 fcf_ttm = analysis.get('fcf_real_ttm', 0)
                 market_cap = analysis.get('market_cap', 0)
                 non_gaap = analysis.get('non_gaap_flag', '')
+                arch = analysis.get('archetype_id', '')
+                sect = analysis.get('sector', '')
 
                 # Reject Non-GAAP abusers
                 if '🚫' in non_gaap:
                     continue
+
+                # Archetype filter
+                if archetype_filter and archetype_filter != 'all':
+                    if arch != archetype_filter:
+                        continue
+
+                # Sector filter
+                if sector_filter and sector_filter != 'all':
+                    if sector_filter.lower() not in sect.lower():
+                        continue
 
                 # PER filter
                 if per is not None and per > criteria.get('max_per', 20):
@@ -110,6 +131,8 @@ def scan_opportunities(criteria: dict = None, max_stocks: int = 20, market: str 
                     'ticker': analysis.get('ticker'),
                     'empresa': analysis.get('empresa'),
                     'sector': analysis.get('sector'),
+                    'archetype_id': arch,
+                    'archetype_label': analysis.get('archetype_label', ''),
                     'current_price': analysis.get('current_price'),
                     'intrinsic_value': analysis.get('intrinsic_value'),
                     'margen_seguridad': mos,
@@ -126,10 +149,29 @@ def scan_opportunities(criteria: dict = None, max_stocks: int = 20, market: str 
             except Exception as e:
                 logger.warning(f"Error processing {ticker}: {e}")
 
-    # Sort by margin of safety (highest first)
-    opportunities.sort(key=lambda x: x.get('margen_seguridad', 0), reverse=True)
+    # Sort by chosen metric
+    sort_keys = {
+        'mos': lambda x: x.get('margen_seguridad', 0),
+        'roic': lambda x: x.get('roic_current', 0) or 0,
+        'fcf_yield': lambda x: x.get('fcf_yield', 0),
+        'per': lambda x: -(x.get('per_actual', 999) or 999),  # Lower PER = better, so negate
+        'calidad': lambda x: _calidad_score(x.get('calidad', '')),
+    }
+    sort_fn = sort_keys.get(sort_by, sort_keys['mos'])
+    opportunities.sort(key=sort_fn, reverse=True)
 
     return opportunities[:max_stocks]
+
+
+def _calidad_score(calidad_str: str) -> int:
+    """Convert calidad label to numeric score for sorting."""
+    if '⭐' in calidad_str or 'Alta' in calidad_str:
+        return 4
+    if '✅' in calidad_str or 'Aceptable' in calidad_str:
+        return 3
+    if '⚠' in calidad_str or 'Media' in calidad_str:
+        return 2
+    return 1
 
 
 def scan_quick(tickers_list: list = None) -> list:

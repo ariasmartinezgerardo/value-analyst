@@ -374,7 +374,8 @@ def update_all(current_user):
 def explore(current_user):
     """
     Scan for undervalued opportunities.
-    Optional query params: max_per, min_roic, min_fcf_yield, min_mos
+    Query params: max_per, min_roic, min_fcf_yield, min_mos,
+                  archetype, sector, sort_by
     """
     criteria = {
         'max_per': float(request.args.get('max_per', 20)),
@@ -383,9 +384,19 @@ def explore(current_user):
         'min_mos': float(request.args.get('min_mos', 20)),
     }
     market = request.args.get('market', 'sp500')
+    archetype_filter = request.args.get('archetype', None)
+    sector_filter = request.args.get('sector', None)
+    sort_by = request.args.get('sort_by', 'mos')
 
-    logger.info(f"User {current_user['username']} starting opportunity scan in {market} with criteria: {criteria}")
-    opportunities = scan_opportunities(criteria=criteria, market=market)
+    logger.info(f"User {current_user['username']} starting opportunity scan in {market} "
+                f"with criteria: {criteria}, archetype={archetype_filter}, "
+                f"sector={sector_filter}, sort={sort_by}")
+    opportunities = scan_opportunities(
+        criteria=criteria, market=market,
+        archetype_filter=archetype_filter,
+        sector_filter=sector_filter,
+        sort_by=sort_by,
+    )
     logger.info(f"Scan complete: {len(opportunities)} opportunities found")
 
     return jsonify({

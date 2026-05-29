@@ -975,23 +975,83 @@ function renderScatterPlot() {
 const exploreProfiles = {
   conservative: { max_per: 15, min_roic: 15, min_fcf_yield: 7, min_mos: 30 },
   moderate: { max_per: 20, min_roic: 12, min_fcf_yield: 5, min_mos: 20 },
-  aggressive: { max_per: 25, min_roic: 8, min_fcf_yield: 3, min_mos: 10 }
+  aggressive: { max_per: 25, min_roic: 8, min_fcf_yield: 3, min_mos: 10 },
+};
+
+// Apply a profile preset to the sliders
+window.applyExploreProfile = function() {
+  const select = document.getElementById('explore-profile');
+  if (!select) return;
+  const key = select.value;
+  if (key === 'custom') return; // Don't change sliders for custom
+  const p = exploreProfiles[key];
+  if (!p) return;
+
+  document.getElementById('slider-per').value = p.max_per;
+  document.getElementById('slider-roic').value = p.min_roic;
+  document.getElementById('slider-fcf').value = p.min_fcf_yield;
+  document.getElementById('slider-mos').value = p.min_mos;
+  onSliderChange();
+};
+
+// Update value labels when sliders change
+window.onSliderChange = function() {
+  const perVal = document.getElementById('slider-per').value;
+  const roicVal = document.getElementById('slider-roic').value;
+  const fcfVal = document.getElementById('slider-fcf').value;
+  const mosVal = document.getElementById('slider-mos').value;
+
+  document.getElementById('slider-per-value').textContent = perVal + 'x';
+  document.getElementById('slider-roic-value').textContent = roicVal + '%';
+  document.getElementById('slider-fcf-value').textContent = fcfVal + '%';
+  document.getElementById('slider-mos-value').textContent = mosVal + '%';
+
+  // Switch profile to "Custom" when user manually adjusts
+  const profileSelect = document.getElementById('explore-profile');
+  if (profileSelect) {
+    const currentProfile = profileSelect.value;
+    if (currentProfile !== 'custom') {
+      const p = exploreProfiles[currentProfile];
+      if (p && (
+        parseInt(perVal) !== p.max_per ||
+        parseInt(roicVal) !== p.min_roic ||
+        parseInt(fcfVal) !== p.min_fcf_yield ||
+        parseInt(mosVal) !== p.min_mos
+      )) {
+        profileSelect.value = 'custom';
+      }
+    }
+  }
+
+  // Update filter chips
+  updateExploreChips();
 };
 
 window.updateExploreChips = function() {
-  const select = document.getElementById('explore-profile');
-  if (!select) return;
-  const profileKey = select.value;
-  const p = exploreProfiles[profileKey];
   const container = document.getElementById('explorer-filters-container');
-  if (container) {
-    container.innerHTML = `
-      <span class="filter-chip">PER &lt; ${p.max_per}</span>
-      <span class="filter-chip">ROIC &gt; ${p.min_roic}%</span>
-      <span class="filter-chip">FCF Yield &gt; ${p.min_fcf_yield}%</span>
-      <span class="filter-chip">MoS &gt; ${p.min_mos}%</span>
-    `;
-  }
+  if (!container) return;
+
+  const perVal = document.getElementById('slider-per')?.value || 20;
+  const roicVal = document.getElementById('slider-roic')?.value || 12;
+  const fcfVal = document.getElementById('slider-fcf')?.value || 5;
+  const mosVal = document.getElementById('slider-mos')?.value || 20;
+
+  const archSelect = document.getElementById('explore-archetype');
+  const sectorSelect = document.getElementById('explore-sector');
+  const archLabel = archSelect && archSelect.value !== 'all' 
+    ? archSelect.options[archSelect.selectedIndex].text : null;
+  const sectorLabel = sectorSelect && sectorSelect.value !== 'all'
+    ? sectorSelect.options[sectorSelect.selectedIndex].text : null;
+
+  let chips = `
+    <span class="filter-chip">PER &lt; ${perVal}x</span>
+    <span class="filter-chip">ROIC &gt; ${roicVal}%</span>
+    <span class="filter-chip">FCF Yield &gt; ${fcfVal}%</span>
+    <span class="filter-chip">MoS &gt; ${mosVal}%</span>
+  `;
+  if (archLabel) chips += `<span class="filter-chip filter-chip--accent">${archLabel}</span>`;
+  if (sectorLabel) chips += `<span class="filter-chip filter-chip--accent">${sectorLabel}</span>`;
+  container.innerHTML = chips;
 };
 
 // ─── Explorer / NOVEDAD ─────────────────────────────────────────
@@ -999,33 +1059,54 @@ window.updateExploreChips = function() {
 async function exploreOpportunities() {
   if (state.isExploring) return;
   
-  const selectProfile = document.getElementById('explore-profile');
-  const profileKey = selectProfile ? selectProfile.value : 'moderate';
-  const p = exploreProfiles[profileKey];
-  
   const selectMarket = document.getElementById('explore-market');
   const market = selectMarket ? selectMarket.value : 'sp500';
-  const marketName = selectMarket ? selectMarket.options[selectMarket.selectedIndex].text : 'del mercado seleccionado';
+  const marketName = selectMarket ? selectMarket.options[selectMarket.selectedIndex].text : 'del mercado';
   
+  // Read slider values
+  const maxPer = document.getElementById('slider-per')?.value || 20;
+  const minRoic = document.getElementById('slider-roic')?.value || 12;
+  const minFcf = document.getElementById('slider-fcf')?.value || 5;
+  const minMos = document.getElementById('slider-mos')?.value || 20;
+
+  // Read archetype/sector
+  const archetype = document.getElementById('explore-archetype')?.value || 'all';
+  const sector = document.getElementById('explore-sector')?.value || 'all';
+
   const btn = document.getElementById('btn-explore');
   const resultsContainer = document.getElementById('explorer-results');
+  const sortBar = document.getElementById('explorer-sort');
   
   state.isExploring = true;
   btn.classList.add('btn-explore--loading');
   btn.innerHTML = '<span class="spinner"></span> Escaneando mercado...';
+  if (sortBar) sortBar.style.display = 'none';
   
   resultsContainer.innerHTML = `
     <div class="progress-bar"><div class="progress-bar__fill" style="width: 60%"></div></div>
     <p style="text-align: center; color: var(--text-tertiary); font-size: 0.85rem;">
-      Analizando ~50 empresas de <strong>${marketName}</strong>...<br>
+      Analizando empresas de <strong>${marketName}</strong>...<br>
       <span style="font-size: 0.75rem;">Esto puede tardar 1-2 minutos</span>
     </p>
   `;
 
   try {
-    const queryStr = `?market=${market}&max_per=${p.max_per}&min_roic=${p.min_roic}&min_fcf_yield=${p.min_fcf_yield}&min_mos=${p.min_mos}`;
+    let queryStr = `?market=${market}&max_per=${maxPer}&min_roic=${minRoic}&min_fcf_yield=${minFcf}&min_mos=${minMos}`;
+    if (archetype !== 'all') queryStr += `&archetype=${archetype}`;
+    if (sector !== 'all') queryStr += `&sector=${encodeURIComponent(sector)}`;
+    queryStr += `&sort_by=mos`; // Initial sort
+
     const data = await apiGet('/explore' + queryStr);
     state.explorerResults = data.opportunities || [];
+    
+    // Show sort bar if results
+    if (sortBar && state.explorerResults.length > 0) {
+      sortBar.style.display = 'flex';
+      // Reset active sort tab
+      sortBar.querySelectorAll('.explorer-sort__btn').forEach(b => b.classList.remove('active'));
+      sortBar.querySelector('[data-sort="mos"]')?.classList.add('active');
+    }
+    
     renderExplorerResults();
   } catch (err) {
     resultsContainer.innerHTML = renderEmptyState('❌', 'Error', 'No se pudo completar el escaneo. Inténtalo de nuevo.');
@@ -1036,6 +1117,25 @@ async function exploreOpportunities() {
   }
 }
 
+// Client-side sort (re-sort cached results without re-fetching)
+window.sortExplorerResults = function(sortKey, btnEl) {
+  if (!state.explorerResults || state.explorerResults.length === 0) return;
+
+  // Update active button
+  document.querySelectorAll('.explorer-sort__btn').forEach(b => b.classList.remove('active'));
+  if (btnEl) btnEl.classList.add('active');
+
+  const sortFns = {
+    mos: (a, b) => (b.margen_seguridad || 0) - (a.margen_seguridad || 0),
+    roic: (a, b) => (b.roic_current || 0) - (a.roic_current || 0),
+    fcf_yield: (a, b) => (b.fcf_yield || 0) - (a.fcf_yield || 0),
+    per: (a, b) => ((a.per_actual || 999) - (b.per_actual || 999)), // Lower PER first
+  };
+
+  state.explorerResults.sort(sortFns[sortKey] || sortFns.mos);
+  renderExplorerResults();
+};
+
 function renderExplorerResults() {
   const container = document.getElementById('explorer-results');
   
@@ -1043,7 +1143,7 @@ function renderExplorerResults() {
     container.innerHTML = renderEmptyState(
       '🔍',
       'Sin resultados',
-      'No se encontraron empresas que cumplan todos los criterios de valor. Intenta ajustar los filtros.'
+      'No se encontraron empresas que cumplan todos los criterios. Prueba a relajar los filtros (bajar ROIC, subir PER máximo, o bajar MoS).'
     );
     return;
   }
@@ -1057,14 +1157,21 @@ function renderExplorerResults() {
 
   for (const opp of state.explorerResults) {
     const mosColor = getMosColor(opp.margen_seguridad);
+    const archBadge = opp.archetype_label ? `<span class="archetype-badge">${opp.archetype_label}</span>` : '';
     html += `
       <div class="card opportunity-card">
         <div class="opportunity-card__header">
           <div>
             <div class="opportunity-card__ticker">🏆 ${opp.ticker}</div>
             <div class="opportunity-card__name">${opp.empresa}</div>
+            <div class="opportunity-card__meta">${opp.sector || ''} ${archBadge}</div>
           </div>
-          <div class="opportunity-card__price">${formatCurrency(opp.current_price)}</div>
+          <div style="text-align: right;">
+            <div class="opportunity-card__price">${formatCurrency(opp.current_price)}</div>
+            <div class="opportunity-card__intrinsic" style="font-size: 0.75rem; color: var(--text-tertiary);">
+              Intrínseco: ${formatCurrency(opp.intrinsic_value)}
+            </div>
+          </div>
         </div>
         
         <div class="opportunity-card__metrics">
