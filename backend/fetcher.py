@@ -606,6 +606,15 @@ def get_market_tickers(market: str = 'sp500') -> list:
         # Legacy aliases (keep for backward compatibility)
         'pharma': None, 'finance': None, 'consumer': None, 'energy': None, 'defense': None,
     }
+    
+    # Handle global/all: combine all indices
+    if market.lower() in ('global', 'all'):
+        all_tickers = []
+        for key in ['sp500', 'nasdaq', 'dowjones', 'stoxx600', 'ftse100', 'dax40', 'cac40', 'ibex35', 'japan']:
+            all_tickers.extend(markets.get(key, []))
+        seen = set()
+        return [x for x in all_tickers if not (x in seen or seen.add(x))]
+
     # Handle legacy aliases
     if market.lower() in ('pharma', 'finance', 'consumer', 'energy', 'defense'):
         market = 'sector_' + market.lower()
