@@ -238,24 +238,50 @@
     <!-- ─── Page: Settings (placeholder for bottom nav) ─────── -->
     <div id="page-settings" class="page">
       <h1 class="page__title">⚙️ Configuración</h1>
-      <p class="page__subtitle">Parámetros y exportación de datos</p>
+      <p class="page__subtitle">Parámetros dinámicos y modelos de valoración</p>
       
-      <div class="card">
+      <div class="card" style="margin-bottom: var(--space-lg);">
         <div class="info-row">
-          <span class="info-row__label">WACC (Tasa de descuento)</span>
-          <span class="info-row__value">10.0%</span>
+          <span class="info-row__label">🎯 WACC (Tasa de Descuento)</span>
+          <span class="info-row__value" style="color: var(--accent-primary); font-weight: 700;">Variable (6.0% - 12.0%)</span>
         </div>
         <div class="info-row">
-          <span class="info-row__label">Crecimiento Terminal</span>
+          <span class="info-row__label">📈 Crecimiento Terminal (g)</span>
           <span class="info-row__value">2.5%</span>
         </div>
         <div class="info-row">
-          <span class="info-row__label">Rendimiento Bono AAA</span>
+          <span class="info-row__label">🏛️ Rendimiento Bono AAA (Y)</span>
           <span class="info-row__value">4.5%</span>
         </div>
         <div class="info-row">
-          <span class="info-row__label">MoS Mínimo Recomendación</span>
-          <span class="info-row__value">20%</span>
+          <span class="info-row__label">🛡️ Margen de Seguridad (MoS)</span>
+          <span class="info-row__value">15% - 20% (Recomendado)</span>
+        </div>
+        <div class="info-row">
+          <span class="info-row__label">⚠️ Desviación EBITDA GAAP Máx.</span>
+          <span class="info-row__value" style="color: var(--color-danger); font-weight: 600;">30.0%</span>
+        </div>
+      </div>
+
+      <div style="margin-top: var(--space-lg);">
+        <p style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: var(--space-sm);">
+          Lógica de Parámetros Dinámicos
+        </p>
+        <div class="card" style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.7; display: flex; flex-direction: column; gap: var(--space-sm);">
+          <div>
+            <strong style="color: var(--text-primary); display: block; margin-bottom: 2px;">⚡ WACC Sectorial y por Tamaño</strong>
+            <span>La tasa de descuento se adapta al riesgo intrínseco del negocio. Las <strong>Utilities</strong> y <strong>Real Estate</strong> descuentan al <strong>7.0%</strong>; <strong>Consumo Defensivo</strong> al <strong>8.0%</strong>; <strong>Salud, Financieras e Industriales</strong> al <strong>9.0%</strong>; y <strong>Tecnología, Energía y Consumo Cíclico</strong> al <strong>10.0%</strong>. Se aplica un descuento de <strong>-1.0%</strong> a Mega Caps, y primas de <strong>+1.0%</strong> a Mid Caps y <strong>+2.0%</strong> a Small Caps, con un suelo absoluto del 6.0%.</span>
+          </div>
+          <div style="height: 1px; background: var(--border-subtle); margin: 4px 0;"></div>
+          <div>
+            <strong style="color: var(--text-primary); display: block; margin-bottom: 2px;">💸 FCF Ajustado por SBC (Stock-Based Compensation)</strong>
+            <span>Para evitar la dilución contable y evaluar el flujo de caja real, la compensación basada en acciones (SBC) se resta por completo del Free Cash Flow operativo: <code style="font-family: var(--font-mono); font-size: 0.72rem; background: var(--bg-elevated); padding: 2px 6px; border-radius: 4px; color: var(--text-primary); border: 1px solid var(--border-subtle);">FCF Ajustado = FCF Real − SBC</code>.</span>
+          </div>
+          <div style="height: 1px; background: var(--border-subtle); margin: 4px 0;"></div>
+          <div>
+            <strong style="color: var(--text-primary); display: block; margin-bottom: 2px;">🛡️ Auditoría Contable (GAAP vs Ajustado)</strong>
+            <span>El motor calcula el EBITDA real a partir de los componentes financieros brutos. Si el EBITDA reportado como "Ajustado" o "Non-GAAP" por la directiva de la empresa se desvía más de un <strong>30%</strong> frente al real calculado por la app, la empresa se bloquea y se califica automáticamente como <strong>🚫 No Elegible</strong> por falta de transparencia contable.</span>
+          </div>
         </div>
       </div>
 
@@ -276,15 +302,28 @@
 
       <div style="margin-top: var(--space-lg);">
         <p style="font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: var(--space-sm);">
-          Motor Analítico
+          Modelos de Valoración Adaptativos
         </p>
-        <div class="card" style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.7;">
-          <strong style="color: var(--accent-primary);">FCF Real =</strong> EBITDA − CAPEX − Intereses − Impuestos − ΔWC<br>
-          <strong style="color: var(--accent-primary);">ROIC =</strong> NOPAT / Invested Capital<br>
-          <strong style="color: var(--accent-primary);">Graham =</strong> EPS × (8.5 + 2g) × 4.4 / Y<br>
-          <strong style="color: var(--accent-primary);">DCF =</strong> NPV(FCF proyectados 10a + Terminal Value)<br>
-          <br>
-          <span style="color: var(--color-danger);">🚫 Prohibición absoluta de EBITDA Ajustado / Non-GAAP</span>
+        <div class="card" style="font-size: 0.78rem; color: var(--text-secondary); line-height: 1.7; display: flex; flex-direction: column; gap: var(--space-sm);">
+          <div>
+            <strong style="color: var(--accent-primary);">🚀 DCF (Discounted Cash Flow)</strong>
+            <span>Proyecta y descuenta flujos de caja libre a 10 años adaptándose a 3 arquetipos de negocio (Classic Value, Compounder, Hypergrowth) y aplicando caps inteligentes de crecimiento.</span>
+          </div>
+          <div style="height: 1px; background: var(--border-subtle); margin: 2px 0;"></div>
+          <div>
+            <strong style="color: var(--accent-primary);">🧮 EPV (Earnings Power Value)</strong>
+            <span>Salvaguarda alternativa basada en el método del profesor Bruce Greenwald que capitaliza los beneficios netos constantes a perpetuidad para empresas industriales o con CAPEX temporalmente pesado.</span>
+          </div>
+          <div style="height: 1px; background: var(--border-subtle); margin: 2px 0;"></div>
+          <div>
+            <strong style="color: var(--accent-primary);">🏦 Price/Book Justificado</strong>
+            <span>Modelo financiero especializado para bancos y entidades de crédito, derivando el valor a partir de la rentabilidad del patrimonio neto (ROE) y el coste de capital propio.</span>
+          </div>
+          <div style="height: 1px; background: var(--border-subtle); margin: 2px 0;"></div>
+          <div>
+            <strong style="color: var(--accent-primary);">🏛️ DDM (Modelo Descuento Dividendos)</strong>
+            <span>Usado específicamente para valorar Utilities de alta estabilidad y REITs inmobiliarios, basado en el flujo de caja distribuido y su sostenibilidad.</span>
+          </div>
         </div>
       </div>
 

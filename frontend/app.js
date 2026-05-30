@@ -1715,6 +1715,33 @@ const wikiData = [
     concept: 'Cuando una empresa no tiene beneficios (EPS negativo) ni flujo de caja libre positivo, el PER y el DCF tradicional no funcionan. El EV/Revenue compara el valor total de la empresa (capitalización + deuda neta) contra sus ingresos. La app también calcula el EV/Revenue Forward a 3 años, proyectando las ventas futuras al ritmo de crecimiento actual.',
     formula: 'EV/Revenue = Enterprise Value / Ingresos Totales Anuales',
     utility: 'Permite comparar empresas de hipercrecimiento entre sí independientemente de su rentabilidad actual. Un EV/Revenue Forward de 5x es mucho más barato que uno de 20x. La proyección a 3 años muestra lo barata que puede estar una empresa si mantiene su ritmo de crecimiento.'
+  },
+  {
+    id: 'epv-value',
+    category: 'valuation',
+    title: '🧮 Earnings Power Value (EPV) Fallback',
+    short: 'Valoración alternativa para empresas cíclicas o con CAPEX pesado y FCF distorsionado.',
+    concept: 'Es una metodología de valoración desarrollada por el profesor Bruce Greenwald (Columbia Business School) que asume que la empresa dejará de crecer y operará en un estado de beneficios constantes a perpetuidad. La app la activa automáticamente como salvaguarda (\'fallback\') cuando el FCF Real de una empresa madura y con beneficios netos estables es inusualmente bajo debido a inversiones de capital intensivas y temporales (CAPEX pesado), asegurando que no descartemos excelentes oportunidades por anomalías temporales de flujo de caja libre.',
+    formula: 'EPV = (Beneficio Neto Promedio de 5 años / WACC + Caja actual - Deuda total) / Acciones en circulación',
+    utility: 'Evita el sesgo del DCF tradicional que penaliza severamente a empresas industriales o cíclicas estables en momentos de alta inversión. Si el DCF sale extremadamente bajo por culpa del CAPEX pero la empresa sigue imprimiendo beneficios contables sólidos, el EPV nos da una red de seguridad analítica de valoración de "poder de beneficios".'
+  },
+  {
+    id: 'subunit-currency',
+    category: 'mercado',
+    title: '💱 Ajuste de Subunidad Monetaria (GBp / GBX) y Multidivisa',
+    short: 'Conversión inteligente para acciones listadas en peniques y discrepancias de divisas.',
+    concept: 'Muchas empresas que cotizan en la bolsa de Londres (LSE) muestran su precio de cotización en peniques esterlinas (GBp o GBX, por ejemplo, 3118.0p) en lugar de libras esterlinas (GBP, 31.18£). Sin embargo, sus estados financieros presentados en sus reportes anuales se expresan en libras esterlinas (GBP) o incluso en dólares (USD). Si un algoritmo compara directamente el precio de 3118p con los beneficios de 2.5£ por acción, el margen de seguridad resultante saldrá absurdamente negativo.',
+    formula: 'Si cotización = GBp/GBX → Precio / 100 | Tipo de cambio implícito derivado de PER y EPS',
+    utility: 'El motor de la app detecta automáticamente los tickers de Londres (.L) y corrige la subunidad dividiendo por 100 el precio de cotización. Además, si la cotización está en una divisa y los reportes en otra, el sistema calcula de forma dinámica un tipo de cambio cruzado exacto basado en la relación entre el PER y el beneficio por acción (EPS), asegurando que todas las métricas de margen de seguridad y rendimientos sean 100% consistentes y libres de distorsiones multidivisa.'
+  },
+  {
+    id: 'filtros-avanzados',
+    category: 'strategy',
+    title: '🎛️ Filtros Avanzados y Score de Calidad (Explorador)',
+    short: 'Uso de los nuevos deslizadores dinámicos y perfiles para buscar oportunidades.',
+    concept: 'El nuevo Opportunity Explorer permite filtrar en tiempo real las empresas escaneadas utilizando deslizadores táctiles para cuatro métricas clave: Nota de Calidad mínima, Tasa de Crecimiento mínima, Dividend Yield mínimo y Margen de Seguridad Absoluto mínimo. Los resultados se pueden ordenar de forma dinámica por cualquiera de estas columnas haciendo clic en las pestañas de ordenación.',
+    formula: 'Calificación de Calidad (0-9 pts) = ROIC (3pts) + Crecimiento EPS (2pts) + Crecimiento FCF (2pts) + MoS > 30% (2pts).',
+    utility: 'Te permite aplicar "Perfiles de Exploración" predefinidos al instante. Por ejemplo, pulsando "Compounders de Calidad" se ajustan los sliders a alta calidad y crecimiento medio, mientras que con "Cazador de Dividendos" se prioriza el Dividend Yield. Puedes refinar la búsqueda filtrando por Arquetipo y Sector/Mercado.'
   }
 ];
 
