@@ -403,6 +403,92 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             if shares_history:
                 break
 
+        # ─── Quarterly Earnings History (last 4 quarters) ────────
+        quarterly_data = []
+        try:
+            q_inc = stock.quarterly_income_stmt
+            if q_inc is not None and not q_inc.empty:
+                q_cols = list(q_inc.columns)[:4]  # Most recent 4 quarters
+                for col in q_cols:
+                    q_date = str(col.date()) if hasattr(col, 'date') else str(col)
+
+                    # Revenue
+                    q_rev = None
+                    for rk in ['Total Revenue', 'TotalRevenue', 'Operating Revenue']:
+                        if rk in q_inc.index:
+                            val = q_inc.loc[rk, col]
+                            if not pd.isna(val):
+                                q_rev = float(val)
+                                break
+
+                    # Operating Income
+                    q_op_inc = None
+                    for ok in ['Operating Income', 'OperatingIncome']:
+                        if ok in q_inc.index:
+                            val = q_inc.loc[ok, col]
+                            if not pd.isna(val):
+                                q_op_inc = float(val)
+                                break
+
+                    # Net Income
+                    q_net = None
+                    for nk in ['Net Income', 'NetIncome', 'Net Income Common Stockholders']:
+                        if nk in q_inc.index:
+                            val = q_inc.loc[nk, col]
+                            if not pd.isna(val):
+                                q_net = float(val)
+                                break
+
+                    # EPS (diluted preferred, fallback to basic)
+                    q_eps = None
+                    for ek in ['Diluted EPS', 'DilutedEPS', 'Basic EPS', 'BasicEPS']:
+                        if ek in q_inc.index:
+                            val = q_inc.loc[ek, col]
+                            if not pd.isna(val):
+                                q_eps = float(val)
+                                break
+
+                    quarterly_data.append({
+                        'date': q_date,
+                        'revenue': q_rev,
+                        'operating_income': q_op_inc,
+                        'net_income': q_net,
+                        'eps': q_eps,
+                    })
+        except Exception as e:
+            logger.warning(f"{ticker_symbol}: Error extracting quarterly data: {e}")
+
+        # ─── Next Earnings Call & Analyst Estimates ──────────────
+        next_earnings = None
+        try:
+            cal = stock.calendar
+            if cal:
+                earnings_dates = cal.get('Earnings Date', [])
+                next_date = None
+                if earnings_dates:
+                    next_date = str(earnings_dates[0]) if earnings_dates else None
+
+                est_eps = cal.get('Earnings Average')
+                est_eps_low = cal.get('Earnings Low')
+                est_eps_high = cal.get('Earnings High')
+                est_rev = cal.get('Revenue Average')
+                est_rev_low = cal.get('Revenue Low')
+                est_rev_high = cal.get('Revenue High')
+
+                if next_date:
+                    next_earnings = {
+                        'date': next_date,
+                        'eps_estimate': float(est_eps) if est_eps is not None else None,
+                        'eps_low': float(est_eps_low) if est_eps_low is not None else None,
+                        'eps_high': float(est_eps_high) if est_eps_high is not None else None,
+                        'revenue_estimate': float(est_rev) if est_rev is not None else None,
+                        'revenue_low': float(est_rev_low) if est_rev_low is not None else None,
+                        'revenue_high': float(est_rev_high) if est_rev_high is not None else None,
+                    }
+        except Exception as e:
+            logger.warning(f"{ticker_symbol}: Error extracting earnings calendar: {e}")
+
+
         # ─── Build result ────────────────────────────────────────
         result = {
             'ticker': ticker_symbol.upper().strip(),
@@ -466,6 +552,10 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             'compensation_risk': compensation_risk,
             'business_summary': business_summary,
             'shares_history': shares_history,
+
+            # Quarterly Earnings & Calendar
+            'quarterly_data': quarterly_data,
+            'next_earnings': next_earnings,
 
             'fetched_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
             'error': None

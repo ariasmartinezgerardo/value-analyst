@@ -87,27 +87,33 @@ function getTrendEmoji(trend) {
 function getSemaforoClass(status) {
   if (!status) return 'neutral';
   if (status.includes('STRONG BUY') || status.includes('CALIDAD') || status.includes('GROWTH BUY')) return 'strong-buy';
-  if (status.includes('SOBREVALORADA')) return 'overvalued';
+  if (status.includes('SOBREVALORADA') || status.includes('OVERPRICED')) return 'overvalued';
   if (status.includes('NO ELEGIBLE')) return 'no-eligible';
+  if (status.includes('ALTO RIESGO')) return 'overvalued';
   return 'neutral';
 }
 
 function getSemaforoEmoji(status) {
   if (!status) return '⚪';
   if (status.includes('STRONG BUY') || status.includes('CALIDAD') || status.includes('GROWTH BUY')) return '🟢';
-  if (status.includes('SOBREVALORADA')) return '🔴';
+  if (status.includes('SOBREVALORADA') || status.includes('OVERPRICED')) return '🔴';
   if (status.includes('NO ELEGIBLE')) return '🚫';
+  if (status.includes('ALTO RIESGO')) return '⚠️';
   return '🟡';
 }
 
 function getSemaforoMeaning(status) {
   if (!status) return 'No hay datos de valoración.';
   if (status.includes('STRONG BUY')) return 'Convergencia total. Empresa barata por fundamentales (DCF/Graham) e históricamente.';
-  if (status.includes('GROWTH BUY')) return 'Metodología Growth: PEG < 1 (infravalorada para su crecimiento) + Rule of 40 > 40 (calidad SaaS/tech premium).';
-  if (status.includes('COMPRA DE CALIDAD')) return 'Caso Ferrari: Empresa de extraordinaria calidad (Wide Moat y excelente directiva) cotizando a un precio razonable.';
+  if (status.includes('GROWTH BUY')) return 'Metodología Growth: PEG < 1.5 (infravalorada para su crecimiento) + Rule of 40 ≥ 40 (calidad tech premium).';
+  if (status.includes('COMPRA DE CALIDAD')) return 'Caso Buffett: Empresa de extraordinaria calidad (Wide Moat y excelente directiva) cotizando a un precio razonable.';
+  if (status.includes('GROWTH OVERPRICED')) return 'Growth sobrecomprado: PEG > 2.5 o Rule of 40 < 20. El mercado ya descuenta demasiado crecimiento futuro en el precio.';
+  if (status.includes('GROWTH HOLD')) return 'Growth en rango intermedio. El PEG y Rule of 40 no confirman ni ganga ni burbuja. Vigilar evolución trimestral.';
   if (status.includes('SOBREVALORADA')) return 'Precio excesivo, alto riesgo de corrección por fundamentales y valoración histórica.';
   if (status.includes('NO ELEGIBLE')) return 'No elegible. Reportes no transparentes o EBITDA Ajustado manipulado (>30% de divergencia).';
-  return 'Señal mixta o intermedia. Requiere análisis cualitativo profundo (ej. caso Ferrari).';
+  if (status.includes('ALTO RIESGO')) return 'Empresa sin beneficios y crecimiento insuficiente. Valoración especulativa con riesgo muy alto.';
+  if (status.includes('SIN DATOS')) return 'Datos de crecimiento insuficientes para calcular métricas Growth fiables.';
+  return 'Señal mixta o intermedia. Requiere análisis cualitativo profundo.';
 }
 
 // ─── API Calls ──────────────────────────────────────────────────
@@ -272,7 +278,6 @@ function renderPortfolio() {
     const mosBadge = getMosBadgeClass(item.margen_seguridad);
     const mosText = item.margen_seguridad !== null ? formatPercent(item.margen_seguridad) : 'Sin datos';
     const archetypeShort = item.archetype_label ? item.archetype_label.split(' ')[0] : '';
-    
     html += `
       <div class="card card--clickable" onclick="navigate('detail', {ticker: '${item.ticker}'})">
         <button class="portfolio-card__delete" onclick="event.stopPropagation(); removeTicker('${item.ticker}')" title="Eliminar">✕</button>
@@ -381,7 +386,6 @@ async function removeTicker(ticker) {
     showToast('❌ Error al eliminar', 'error');
   }
 }
-
 
 // ─── Company Detail ─────────────────────────────────────────────
 
@@ -555,6 +559,17 @@ function renderCompanyDetail(d) {
             Empresa sin beneficios y crecimiento insuficiente para justificar una valoración fiable. Riesgo muy alto.
           </div>
           `}
+          ${d.methodology !== 'growth' && d.methodology !== 'speculative' && (d.peg_forward != null || d.peg_trailing != null) ? `
+          <div style="display: flex; align-items: center; gap: var(--space-sm); padding: 6px var(--space-md); margin-top: 4px; background: rgba(0,0,0,0.15); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
+            <span style="font-size: 0.65rem; color: var(--text-tertiary); text-transform: uppercase; white-space: nowrap;">PEG (Lynch)</span>
+            <span style="font-size: 0.9rem; font-weight: 700; font-family: var(--font-mono); color: ${d.peg_signal === 'undervalued' ? 'var(--color-success)' : d.peg_signal === 'fair' ? '#fbbf24' : 'var(--color-danger)'};">
+              ${d.peg_forward != null ? d.peg_forward + 'x' : d.peg_trailing + 'x'}
+            </span>
+            <span style="font-size: 0.62rem; color: ${d.peg_signal === 'undervalued' ? 'var(--color-success)' : d.peg_signal === 'fair' ? '#fbbf24' : 'var(--color-danger)'};">
+              ${d.peg_signal === 'undervalued' ? '● Barata vs crecimiento' : d.peg_signal === 'fair' ? '● Precio justo' : '● Cara vs crecimiento'}
+            </span>
+          </div>
+          ` : ''}
           <div class="semaforo-card__meaning">${getSemaforoMeaning(d.estado_semaforo)}</div>
         </div>
       </div>
@@ -569,6 +584,100 @@ function renderCompanyDetail(d) {
         <div class="thesis-box">
           <div class="thesis-box__title">📝 TESIS DE INVERSIÓN</div>
           <div class="thesis-box__text">${d.thesis}</div>
+        </div>
+      ` : ''}
+
+      <!-- Quarterly Earnings & Next Earnings Call -->
+      ${(d.quarterly_data && d.quarterly_data.length > 0) || d.next_earnings ? `
+        <div class="card" style="margin-top: var(--space-md); border: 1px solid var(--border-subtle); position: relative; overflow: hidden;">
+          <div style="position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--accent-primary), #a855f7, var(--accent-primary)); opacity: 0.7;"></div>
+          <div style="font-size: 0.78rem; font-weight: 700; color: var(--accent-primary); margin-bottom: var(--space-md); display: flex; align-items: center; gap: var(--space-xs);">
+            🗓️ RESULTADOS TRIMESTRALES & PRÓXIMO EARNINGS CALL
+          </div>
+
+          ${d.next_earnings ? `
+          <div class="responsive-metrics-grid" style="margin-bottom: var(--space-md);">
+            <div style="background: rgba(59,130,246,0.08); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid rgba(59,130,246,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease; cursor: default;"
+                 onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(59,130,246,0.15)';"
+                 onmouseout="this.style.transform='none'; this.style.boxShadow='none';">
+              <div style="font-size: 0.62rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;">Próximo Earnings</div>
+              <div style="font-size: 1.0rem; font-weight: 700; font-family: var(--font-mono); color: var(--accent-primary);">${d.next_earnings.date || '—'}</div>
+            </div>
+            <div style="background: rgba(34,197,94,0.08); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid rgba(34,197,94,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease; cursor: default;"
+                 onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(34,197,94,0.15)';"
+                 onmouseout="this.style.transform='none'; this.style.boxShadow='none';">
+              <div style="font-size: 0.62rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;">EPS Estimado</div>
+              <div style="font-size: 1.0rem; font-weight: 700; font-family: var(--font-mono); color: var(--color-success);">
+                ${d.next_earnings.eps_estimate != null ? formatCurrency(d.next_earnings.eps_estimate, cur) : '—'}
+                ${d.next_earnings.eps_low != null && d.next_earnings.eps_high != null ? `<span style="font-size: 0.6rem; color: var(--text-tertiary); font-weight: 400;"> (${formatCurrency(d.next_earnings.eps_low, cur)} – ${formatCurrency(d.next_earnings.eps_high, cur)})</span>` : ''}
+              </div>
+            </div>
+            <div style="background: rgba(168,85,247,0.08); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid rgba(168,85,247,0.2); transition: transform 0.2s ease, box-shadow 0.2s ease; cursor: default;"
+                 onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(168,85,247,0.15)';"
+                 onmouseout="this.style.transform='none'; this.style.boxShadow='none';">
+              <div style="font-size: 0.62rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em;">Revenue Estimado</div>
+              <div style="font-size: 1.0rem; font-weight: 700; font-family: var(--font-mono); color: #a855f7;">
+                ${d.next_earnings.revenue_estimate != null ? formatLargeNumber(d.next_earnings.revenue_estimate) : '—'}
+              </div>
+            </div>
+          </div>
+          ` : ''}
+
+          ${d.quarterly_data && d.quarterly_data.length > 0 ? `
+          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+            <table class="metrics-table" style="font-size: 0.78rem;">
+              <thead>
+                <tr>
+                  <th>Trimestre</th>
+                  ${d.quarterly_data.slice().reverse().map(q => {
+                    const parts = q.date.split('-');
+                    const m = parseInt(parts[1]);
+                    const qLabel = m <= 3 ? 'Q1' : m <= 6 ? 'Q2' : m <= 9 ? 'Q3' : 'Q4';
+                    return '<th>' + qLabel + ' ' + parts[0] + '</th>';
+                  }).join('')}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td class="metrics-table__metric">Revenue</td>
+                  ${d.quarterly_data.slice().reverse().map((q, i, arr) => {
+                    const val = q.revenue;
+                    let qoq = '';
+                    if (i > 0 && arr[i-1].revenue && arr[i-1].revenue !== 0 && val) {
+                      const pct = ((val - arr[i-1].revenue) / Math.abs(arr[i-1].revenue) * 100);
+                      const color = pct >= 0 ? 'var(--color-success)' : 'var(--color-danger)';
+                      const arrow = pct >= 0 ? '▲' : '▼';
+                      qoq = '<div style="font-size:0.6rem;color:' + color + ';">' + arrow + ' ' + Math.abs(pct).toFixed(1) + '% QoQ</div>';
+                    }
+                    return '<td class="metrics-table__value">' + formatLargeNumber(val) + qoq + '</td>';
+                  }).join('')}
+                </tr>
+                <tr>
+                  <td class="metrics-table__metric">Benef. Operativo</td>
+                  ${d.quarterly_data.slice().reverse().map(q => '<td class="metrics-table__value">' + formatLargeNumber(q.operating_income) + '</td>').join('')}
+                </tr>
+                <tr>
+                  <td class="metrics-table__metric">Benef. Neto</td>
+                  ${d.quarterly_data.slice().reverse().map(q => '<td class="metrics-table__value">' + formatLargeNumber(q.net_income) + '</td>').join('')}
+                </tr>
+                <tr>
+                  <td class="metrics-table__metric" style="color: var(--accent-primary);">EPS</td>
+                  ${d.quarterly_data.slice().reverse().map((q, i, arr) => {
+                    const val = q.eps;
+                    let beat = '';
+                    if (i > 0 && arr[i-1].eps && arr[i-1].eps !== 0 && val) {
+                      const pct = ((val - arr[i-1].eps) / Math.abs(arr[i-1].eps) * 100);
+                      const color = pct >= 0 ? 'var(--color-success)' : 'var(--color-danger)';
+                      const arrow = pct >= 0 ? '▲' : '▼';
+                      beat = '<div style="font-size:0.6rem;color:' + color + ';">' + arrow + ' ' + Math.abs(pct).toFixed(1) + '%</div>';
+                    }
+                    return '<td class="metrics-table__value" style="font-weight:600;">' + formatCurrency(val, cur) + beat + '</td>';
+                  }).join('')}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          ` : ''}
         </div>
       ` : ''}
     </div>
@@ -635,6 +744,14 @@ function renderCompanyDetail(d) {
               <td class="metrics-table__value">${formatNumber(d.ev_fcf_actual, 1)}x</td>
               <td class="metrics-table__trend">—</td>
             </tr>
+            ${d.peg_forward != null || d.peg_trailing != null ? `
+            <tr>
+              <td class="metrics-table__metric" style="color: var(--accent-primary);">PEG (Lynch)</td>
+              ${(d.fiscal_dates || []).map(() => `<td class="metrics-table__value">—</td>`).reverse().join('')}
+              <td class="metrics-table__value" style="font-weight: 700; color: ${d.peg_signal === 'undervalued' ? 'var(--color-success)' : d.peg_signal === 'fair' ? '#fbbf24' : 'var(--color-danger)'};">${d.peg_forward != null ? d.peg_forward + 'x' : d.peg_trailing + 'x'}</td>
+              <td class="metrics-table__trend">${d.peg_signal === 'undervalued' ? '💎' : d.peg_signal === 'fair' ? '✅' : '⚠️'}</td>
+            </tr>
+            ` : ''}
           </tbody>
         </table>
       </div>
@@ -676,7 +793,32 @@ function renderCompanyDetail(d) {
       <!-- Valuation Box -->
       <div class="valuation-box">
         <div class="valuation-box__title">💎 VALORACIÓN INTRÍNSECA</div>
-        ${d.graham_value && d.graham_value > 0 && d.methodology !== 'growth' ? `
+        ${d.methodology === 'growth' ? `
+        <!-- Growth companies: no DCF, explain PEG methodology -->
+        <div class="valuation-box__row">
+          <span class="valuation-box__label">Precio Mercado</span>
+          <span class="valuation-box__value" style="color: var(--text-primary)">${formatCurrency(d.current_price, cur)}</span>
+        </div>
+        <div class="valuation-box__divider"></div>
+        <div style="font-size: 0.72rem; color: var(--text-tertiary); padding: var(--space-sm) 0; line-height: 1.5;">
+          ⚡ Esta empresa se valora por <strong>PEG + Rule of 40</strong>, no por DCF.
+          El DCF no es fiable para empresas en fase de hipercrecimiento porque el FCF actual no refleja
+          el potencial futuro. El semáforo usa el PEG y la rentabilidad del modelo de negocio.
+        </div>
+        <div class="valuation-box__row" style="margin-top: var(--space-sm);">
+          <span class="valuation-box__label">PEG (Forward)</span>
+          <span class="valuation-box__value" style="color: ${d.peg_signal === 'undervalued' ? 'var(--color-success)' : d.peg_signal === 'fair' ? '#fbbf24' : 'var(--color-danger)'}">${d.peg_forward != null ? d.peg_forward + 'x' : (d.peg_trailing != null ? d.peg_trailing + 'x' : 'N/A')}</span>
+        </div>
+        <div class="valuation-box__row">
+          <span class="valuation-box__label">Rule of 40</span>
+          <span class="valuation-box__value" style="color: ${d.rule_of_40 >= 40 ? 'var(--color-success)' : d.rule_of_40 >= 20 ? '#fbbf24' : 'var(--color-danger)'}">${d.rule_of_40 != null ? d.rule_of_40.toFixed(1) : 'N/A'}</span>
+        </div>
+        <div class="valuation-box__quality" style="margin-top: var(--space-sm);">
+          <span class="valuation-box__quality-label">Calidad</span>
+          <span class="valuation-box__quality-value">${d.calidad || '—'}</span>
+        </div>
+        ` : `
+        ${d.graham_value && d.graham_value > 0 ? `
         <div class="valuation-box__row">
           <span class="valuation-box__label">Graham</span>
           <span class="valuation-box__value">${formatCurrency(d.graham_value, cur)}</span>
@@ -684,7 +826,7 @@ function renderCompanyDetail(d) {
         ` : ''}
         ${d.dcf_value && d.dcf_value > 0 ? `
         <div class="valuation-box__row">
-          <span class="valuation-box__label">${d.archetype_id === 'hypergrowth' ? 'DCF Revenue' : d.archetype_id === 'compounder' ? 'DCF (Multi-Fase)' : 'DCF (10a)'}</span>
+          <span class="valuation-box__label">${d.archetype_id === 'compounder' ? 'DCF (Multi-Fase)' : 'DCF (10a)'}</span>
           <span class="valuation-box__value">${formatCurrency(d.dcf_value, cur)}</span>
         </div>
         ` : ''}
@@ -707,10 +849,11 @@ function renderCompanyDetail(d) {
           <span class="valuation-box__quality-label">Calidad</span>
           <span class="valuation-box__quality-value">${d.calidad || '—'}</span>
         </div>
+        `}
       </div>
 
-      <!-- Reverse DCF -->
-      ${d.implied_growth != null ? `
+      <!-- Reverse DCF — hidden for growth/hypergrowth (DCF not applicable) -->
+      ${d.implied_growth != null && d.methodology !== 'growth' ? `
       <div class="card" style="margin-bottom: var(--space-md);">
         <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; margin-bottom: var(--space-sm);">🔄 Reverse DCF — Crecimiento Implícito en el Precio</div>
         <div class="reverse-dcf-bar">
@@ -735,8 +878,8 @@ function renderCompanyDetail(d) {
       </div>
       ` : ''}
 
-      <!-- Sensitivity Table -->
-      ${d.sensitivity ? `
+      <!-- Sensitivity Table — hidden for growth/hypergrowth (DCF not applicable) -->
+      ${d.sensitivity && d.methodology !== 'growth' ? `
       <div class="card" style="margin-bottom: var(--space-md);">
         <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); text-transform: uppercase; margin-bottom: var(--space-sm);">📐 TABLA DE SENSIBILIDAD (Valor Intrínseco por Acción)</div>
         <div style="overflow-x: auto;">

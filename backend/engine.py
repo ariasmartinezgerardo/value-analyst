@@ -449,7 +449,12 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
         rev_growth = (clean_rev[0] / clean_rev[-1]) ** (1 / n) - 1
 
     # 1. Financial Services (banks, insurance, asset management)
-    if 'financial' in sector:
+    #    EXCEPTION: Payment networks (Visa, Mastercard, PayPal) have sector=Financial Services
+    #    but are technology platforms with asset-light models and no credit risk.
+    #    They should be valued as compounders, not by book value.
+    PAYMENT_NETWORK_INDUSTRIES = ('credit services', 'payment processing', 'transaction processing')
+    is_payment_network = any(p in industry for p in PAYMENT_NETWORK_INDUSTRIES)
+    if 'financial' in sector and not is_payment_network:
         return 'financial', '🏦 Financiero'
 
     # 2. REITs and Utilities
@@ -459,22 +464,66 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
         return 'reit_utility', '⚡ Utility / Suministros'
 
     # 3. No earnings → Hypergrowth or Speculative
+    #    BACKTEST FIX B8: Write-off detector.
+    #    Before classifying EPS<=0 as speculative, check if Operating Cash Flow
+    #    is strongly positive. If OCF is healthy but NI is negative, it's likely
+    #    a non-cash write-off (impairments, goodwill, restructuring charges)
+    #    rather than a true operational loss. In this case, use OCF-implied EPS
+    #    to determine archetype so companies like AT&T (post-WarnerMedia write-off)
+    #    or Disney (streaming investment losses) aren't wrongly classified.
     if (eps_ttm is None or eps_ttm <= 0):
-        if rev_growth and rev_growth > 0.15:
-            return 'hypergrowth', '🔥 Hipercrecimiento'
+        ocf_values = data.get('operating_cashflow_values', [])
+        capex_values_arch = data.get('capital_expenditure_values', [])
+        shares_out = data.get('shares_outstanding', 0)
+        ocf_latest = ocf_values[0] if ocf_values else 0
+        capex_latest = abs(capex_values_arch[0]) if capex_values_arch else 0
+        implied_fcf = (ocf_latest or 0) - capex_latest
+
+        if implied_fcf > 0 and shares_out and shares_out > 0:
+            implied_eps = implied_fcf / shares_out
+            if implied_eps > 0:
+                ticker_name = data.get('ticker', '?')
+                logger.info(f"{ticker_name}: EPS is negative ({eps_ttm}) but OCF-implied EPS is "
+                            f"${implied_eps:.2f} → likely write-off, not operational loss. "
+                            f"Overriding archetype classification with implied EPS.")
+                # Override eps_ttm for archetype detection only (NOT for valuation)
+                # Fall through to the profitable archetype detection below
+                eps_ttm = implied_eps
+            else:
+                # OCF-implied EPS is also negative → genuine operational issue
+                if rev_growth and rev_growth > 0.15:
+                    return 'hypergrowth', '🔥 Hipercrecimiento'
+                else:
+                    return 'speculative', '⚠️ Especulativo (Sin Beneficios)'
         else:
-            return 'speculative', '⚠️ Especulativo (Sin Beneficios)'
+            if rev_growth and rev_growth > 0.15:
+                return 'hypergrowth', '🔥 Hipercrecimiento'
+            else:
+                return 'speculative', '⚠️ Especulativo (Sin Beneficios)'
 
     # From here, EPS > 0 is guaranteed
 
     # 4. COMPOUNDER — rentabilidad primero (ROIC > 20% = always compounder)
-    #    This ensures NVDA, AAPL, AVGO etc. are valued with FCF-based DCF,
-    #    not revenue-based DCF designed for pre-profit startups.
-    if roic_avg and roic_avg > 20:
+    #    EXCEPTION: Mature consumer staples (KO, PG, CL, etc.) have inflated ROIC due to
+    #    decades of buybacks reducing equity, but revenue barely grows (<5% CAGR) and
+    #    analyst estimates are also low (<6%). The multiphase DCF severely undervalues them.
+    #    They belong in classic_value where Graham's formula works correctly.
+    #    IMPORTANT: This exception is SECTOR-LIMITED (consumer defensive/staples only)
+    #    so that AAPL (Technology) and ACN (Technology) are NOT affected.
+    SLOW_GROWTH_SECTORS = ('consumer defensive', 'consumer staples', 'basic materials')
+    is_consumer_staple_sector = any(s in sector for s in SLOW_GROWTH_SECTORS)
+    is_mature_slow_grower = (
+        is_consumer_staple_sector and
+        rev_growth is not None and rev_growth < 0.05 and
+        growth_rate is not None and growth_rate < 0.07
+    )
+    if roic_avg and roic_avg > 20 and not is_mature_slow_grower:
         return 'compounder', '🚀 Compounder'
 
     # 5. COMPOUNDER — moderate ROIC + growth
-    if roic_avg and roic_avg > 15 and growth_rate and growth_rate > 0.10:
+    #    Lowered growth threshold from 10% to 7% to capture stable compounders
+    #    like JNJ (ROIC~17%, growth~8%) that are clearly not classic value stocks.
+    if roic_avg and roic_avg > 15 and growth_rate and growth_rate > 0.07:
         return 'compounder', '🚀 Compounder'
 
     # 6. HYPERGROWTH — only for profitable companies with low ROIC but explosive growth
@@ -482,7 +531,25 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
     if growth_rate and growth_rate > 0.25 and rev_growth and rev_growth > 0.20:
         return 'hypergrowth', '🔥 Hipercrecimiento'
 
-    # 7. Classic Value (everything else with positive earnings)
+    # 7. TURNAROUND GROWTH — recently profitable companies with explosive revenue
+    #    Companies like MRVL that just exited losses but have strong revenue growth.
+    #    Their EPS history is mostly negative so DCF on 1 year of FCF is unreliable.
+    #    We detect: EPS > 0 (current) + majority of historical EPS negative + revenue accelerating
+    #    Uses BOTH multi-year CAGR and 1-year YoY growth (whichever is higher),
+    #    because CAGR can be diluted by old bad years in turnaround situations.
+    eps_values = data.get('eps_values', [])
+    if eps_values and len(eps_values) >= 3:
+        negative_eps_count = sum(1 for e in eps_values if e is not None and e <= 0)
+        if negative_eps_count >= len(eps_values) * 0.5:  # ≥50% of years had losses
+            # Check revenue acceleration: use best of CAGR or 1-year YoY
+            rev_yoy = None
+            if len(clean_rev) >= 2 and clean_rev[1] > 0:
+                rev_yoy = (clean_rev[0] / clean_rev[1]) - 1  # 1-year YoY growth
+            best_rev_growth = max(rev_growth or 0, rev_yoy or 0)
+            if best_rev_growth > 0.20:
+                return 'hypergrowth', '🔥 Turnaround Growth'
+
+    # 8. Classic Value (everything else with positive earnings)
     return 'classic_value', '🏛️ Value Clásico'
 
 
@@ -1059,7 +1126,20 @@ def run_full_analysis(data: dict) -> dict:
         else:
             base_growth_rate = 0.05
             growth_source = 'default'
-    
+
+
+
+    # Analyst sanity check: if Yahoo's estimate is much lower than the company's
+    # own revenue CAGR, it's likely a data quality issue (common for non-US tickers,
+    # ADRs like RACE). In this case, blend analyst + revenue CAGR.
+    if growth_source == 'analyst' and rev_growth and rev_growth > 0:
+        if base_growth_rate < rev_growth * 0.4:  # Analyst < 40% of what revenue shows
+            blended = (base_growth_rate + rev_growth) / 2
+            logger.info(f"{ticker}: Analyst growth {base_growth_rate:.1%} is suspiciously low vs "
+                        f"rev CAGR {rev_growth:.1%}. Blending to {blended:.1%}.")
+            base_growth_rate = blended
+            growth_source = 'blended (analyst+rev_cagr)'
+
     # Haircut: if EPS growth > 1.5x Revenue growth, it's likely unsustainable (e.g. buybacks, margin expansion).
     if rev_growth and rev_growth > 0 and base_growth_rate > (rev_growth * 1.5):
         growth_rate = rev_growth * 1.5
@@ -1219,35 +1299,39 @@ def run_full_analysis(data: dict) -> dict:
         valuation_models_used = ['DCF Revenue-Based']
 
     elif archetype_id == 'financial':
-        # Financial: Book Value Model + standard DCF as secondary
+        # Financial: Book Value Model ONLY
+        # DCF is completely invalid for banks/insurance as FCF includes deposits/reserves.
         book_val = data.get('book_value', 0)
         roe = data.get('roe', 0)
         if roe and roe > 0:
             alt_value = book_value_valuation(book_val, roe, coe=wacc)
             alt_model_name = 'P/Book Justificado'
-        # Also compute DCF if FCF is available
-        dcf_value = dcf_valuation(
-            fcf_current=fcf_for_dcf, growth_rate=growth_rate,
-            shares=shares, total_debt=current_debt, cash=current_cash, wacc=wacc
-        )
-        valuation_models_used = ['P/Book', 'DCF']
+            valuation_models_used = ['P/Book']
+        else:
+            # Fallback to Graham if ROE is missing and EPS is positive
+            if eps_ttm and eps_ttm > 0:
+                graham_value = graham_valuation(eps_ttm, growth_rate_pct)
+                valuation_models_used = ['Graham (Fallback)']
+            else:
+                valuation_models_used = ['Ninguno aplicable']
 
     elif archetype_id == 'reit_utility':
-        # REIT/Utility: DDM + DCF
-        # B4 FIX: Skip DDM if dividend yield is suspiciously high (data error)
+        # REIT/Utility: DDM ONLY
+        # DCF on FCF is invalid as REITs use FFO and Utilities have massive CAPEX distortions.
         raw_div_yield = data.get('dividend_yield', 0) or 0
         dividend_rate = data.get('dividend_rate', 0) or 0
         div_growth = min(growth_rate, 0.05) if growth_rate > 0 else 0.02
         if dividend_rate and dividend_rate > 0 and raw_div_yield <= 0.20:
             alt_value = ddm_valuation(dividend_rate, div_growth, discount_rate=wacc)
             alt_model_name = 'Div. Discount (DDM)'
-        # DCF as secondary
-        dcf_value = dcf_valuation(
-            fcf_current=fcf_for_dcf, growth_rate=growth_rate,
-            shares=shares, total_debt=current_debt, cash=current_cash, wacc=wacc
-        )
-        valuation_models_used = ['DDM'] if alt_value > 0 else []
-        valuation_models_used.append('DCF')
+            valuation_models_used = ['DDM']
+        else:
+            # Fallback to Graham
+            if eps_ttm and eps_ttm > 0:
+                graham_value = graham_valuation(eps_ttm, growth_rate_pct)
+                valuation_models_used = ['Graham (Fallback)']
+            else:
+                valuation_models_used = ['Ninguno aplicable']
 
     else:  # 'speculative'
         # Speculative: No reliable valuation possible
@@ -1338,9 +1422,9 @@ def run_full_analysis(data: dict) -> dict:
         revenue_current=latest_rev,
     )
 
-    # Only keep growth metrics for value/growth methodologies
-    if methodology not in ('value', 'growth'):
-        growth_metrics['has_growth_metrics'] = False
+    # Growth metrics (PEG, Rule of 40) are now available as complementary
+    # indicators for ALL methodologies that have valid data.
+    # The semáforo still uses PEG as PRIMARY signal only for 'growth' methodology.
 
     # ─── Historical Multiples & MS Relativo ──────────────────
     hist_prices = data.get('historical_prices', [])
@@ -1419,14 +1503,31 @@ def run_full_analysis(data: dict) -> dict:
         estado_semaforo = '🚫 NO ELEGIBLE'
         alerta_compra = 0
     elif methodology == 'value':
-        if ms_abs > 15.0 and ms_rel > 10.0:
-            estado_semaforo = '🟢 STRONG BUY'
-            alerta_compra = 1
-        elif ms_abs < 0.0 and ms_rel < 0.0:
-            estado_semaforo = '🔴 SOBREVALORADA'
-            alerta_compra = 0
+        has_relative_data = multiple_type != 'N/A'
+        if has_relative_data:
+            # Full signal: both absolute and relative margins available
+            if ms_abs > 15.0 and ms_rel > 10.0:
+                estado_semaforo = '🟢 STRONG BUY'
+                alerta_compra = 1
+            elif ms_abs < 0.0 and ms_rel < 0.0:
+                estado_semaforo = '🔴 SOBREVALORADA'
+                alerta_compra = 0
+            else:
+                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
         else:
-            estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
+            # BACKTEST FIX B9: Fallback when no historical multiples available.
+            # Without ms_rel, the Strong Buy was mathematically impossible even
+            # with 70%+ MoS (AAPL 2016, BABA 2022, etc.). Use ms_abs alone
+            # with a higher threshold (30% instead of 15%) to compensate for
+            # the missing relative confirmation.
+            if ms_abs > 30.0:
+                estado_semaforo = '🟢 STRONG BUY'
+                alerta_compra = 1
+            elif ms_abs < -15.0:
+                estado_semaforo = '🔴 SOBREVALORADA'
+                alerta_compra = 0
+            else:
+                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
     elif methodology == 'growth':
         peg = growth_metrics.get('peg_forward') or growth_metrics.get('peg_trailing')
         rule40 = growth_metrics.get('rule_of_40')
@@ -1667,6 +1768,10 @@ def run_full_analysis(data: dict) -> dict:
 
         # Business Summary (for thesis)
         'business_summary': data.get('business_summary', ''),
+
+        # Quarterly Earnings History & Calendar
+        'quarterly_data': data.get('quarterly_data', []),
+        'next_earnings': data.get('next_earnings'),
 
         # Meta
         'fetched_at': data.get('fetched_at', ''),

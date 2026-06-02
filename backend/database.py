@@ -6,7 +6,7 @@ Supports SQLite locally and PostgreSQL in production.
 import os
 import json
 from datetime import datetime
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint, select, insert, delete, func
+from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint, select, insert, delete, update, func
 
 # ─── Setup Engine ────────────────────────────────────────────────
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -38,6 +38,8 @@ portfolio_table = Table(
     Column('ticker', String(50), nullable=False),
     Column('added_at', DateTime, default=datetime.utcnow),
     Column('notes', String(1000), server_default=''),
+    Column('purchase_price', Float, nullable=True),
+    Column('shares', Float, nullable=True),
     UniqueConstraint('user_id', 'ticker', name='uix_user_ticker')
 )
 
@@ -144,7 +146,9 @@ def get_portfolio(user_id: int):
         stmt = select(
             portfolio_table.c.ticker,
             portfolio_table.c.added_at,
-            portfolio_table.c.notes
+            portfolio_table.c.notes,
+            portfolio_table.c.purchase_price,
+            portfolio_table.c.shares
         ).where(portfolio_table.c.user_id == user_id).order_by(portfolio_table.c.added_at.desc())
         
         rows = conn.execute(stmt).mappings().all()
@@ -175,6 +179,24 @@ def remove_from_portfolio(user_id: int, ticker: str) -> bool:
             delete(portfolio_table)
             .where(portfolio_table.c.user_id == user_id)
             .where(portfolio_table.c.ticker == ticker.upper().strip())
+        )
+        return res.rowcount > 0
+
+def update_portfolio_position(user_id: int, ticker: str, purchase_price: float = None, shares: float = None) -> bool:
+    """Update purchase price and/or shares for a portfolio position."""
+    with engine.begin() as conn:
+        values = {}
+        if purchase_price is not None:
+            values['purchase_price'] = purchase_price
+        if shares is not None:
+            values['shares'] = shares
+        if not values:
+            return False
+        res = conn.execute(
+            update(portfolio_table)
+            .where(portfolio_table.c.user_id == user_id)
+            .where(portfolio_table.c.ticker == ticker.upper().strip())
+            .values(**values)
         )
         return res.rowcount > 0
 

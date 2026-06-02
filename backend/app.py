@@ -276,6 +276,32 @@ def remove_ticker(current_user, ticker):
         return jsonify({'error': f'{ticker.upper()} not found in portfolio'}), 404
 
 
+@app.route('/api/portfolio/<ticker>', methods=['PATCH'])
+@token_required
+def update_portfolio_item(current_user, ticker):
+    """Update purchase price or shares for a portfolio item."""
+    data = request.json or {}
+    purchase_price = data.get('purchase_price')
+    shares = data.get('shares')
+    
+    if purchase_price is not None:
+        try:
+            purchase_price = float(purchase_price)
+        except ValueError:
+            purchase_price = None
+            
+    if shares is not None:
+        try:
+            shares = float(shares)
+        except ValueError:
+            shares = None
+            
+    updated = db.update_portfolio_position(current_user['id'], ticker, purchase_price, shares)
+    if updated:
+        return jsonify({'message': f'{ticker.upper()} position updated'})
+    else:
+        return jsonify({'error': f'Failed to update {ticker.upper()} or not found'}), 400
+
 # ─── Analysis API (User-secured) ─────────────────────────────────
 
 @app.route('/api/company/<ticker>', methods=['GET'])
