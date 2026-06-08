@@ -799,7 +799,7 @@ function renderCompanyDetail(d) {
         <div class="card">
           <div style="font-size: 0.72rem; font-weight: 700; color: var(--text-tertiary); margin-bottom: var(--space-xs);">🏦 DEUDA</div>
           <div class="info-row"><span class="info-row__label">Interest Coverage</span><span class="info-row__value" style="color: ${d.interest_coverage != null && d.interest_coverage < 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.interest_coverage != null ? (d.interest_coverage > 900 ? 'Sin Deuda' : formatNumber(d.interest_coverage, 1) + 'x') : '—'}</span></div>
-          <div class="info-row"><span class="info-row__label">Net Debt / EBITDA</span><span class="info-row__value" style="color: ${d.net_debt_ebitda != null && d.net_debt_ebitda > 3 ? 'var(--color-danger)' : 'var(--text-primary)'}">${d.net_debt_ebitda != null ? formatNumber(d.net_debt_ebitda, 1) + 'x' : '—'}</span></div>
+          <div class="info-row"><span class="info-row__label">Net Debt / EBITDA</span><span class="info-row__value" style="color: ${d.net_debt_ebitda != null && d.net_debt_ebitda > 3 ? 'var(--color-danger)' : (d.net_debt_ebitda != null && d.net_debt_ebitda < 0 ? 'var(--color-success)' : 'var(--text-primary)')}">${d.net_debt_ebitda != null ? (d.net_debt_ebitda < 0 ? 'Caja Neta' : formatNumber(d.net_debt_ebitda, 1) + 'x') : '—'}</span></div>
         </div>
       </div>
 
