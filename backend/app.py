@@ -175,11 +175,13 @@ def login():
         
     user = db.get_user_by_username(username)
     if not user:
+        logger.warning(f"Failed login: User '{username}' not found.")
         return jsonify({'error': 'Invalid username or password'}), 401
         
     import bcrypt
     # Check password hash
     if not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+        logger.warning(f"Failed login: Incorrect password for user '{username}'.")
         return jsonify({'error': 'Invalid username or password'}), 401
         
     # Generate session token (valid for 30 days)
@@ -238,15 +240,32 @@ def get_portfolio(current_user):
             'precio_mercado': latest.get('precio_mercado') if latest else None,
             'margen_seguridad': latest.get('margen_seguridad') if latest else None,
             'calidad': latest.get('calidad', '') if latest else '',
-            'roic_actual': latest.get('roic_actual') if latest else None,
-            'roic_current': latest.get('roic_actual') if latest else None,
+            'roic_actual': latest.get('roic_hist') if latest else None,
+            'roic_current': latest.get('roic_hist') if latest else None,
             'per_actual': latest.get('per_actual') if latest else None,
             'estado_semaforo': latest.get('estado_semaforo', '') if latest else '',
             'archetype_label': latest.get('archetype_label', '') if latest else '',
             'sector': latest.get('sector', '') if latest else '',
             'last_updated': latest.get('fecha_consulta', '') if latest else '',
+            'list_type': item.get('list_type', 'watchlist')
         })
     return jsonify({'portfolio': enriched})
+
+
+@app.route('/api/portfolio/<ticker>/history', methods=['GET'])
+@token_required
+def get_portfolio_history(current_user, ticker):
+    """Get the analysis history for a specific ticker."""
+    history = db.get_history(current_user['id'], ticker)
+    # We only need dates and MoS for the chart
+    chart_data = []
+    for item in reversed(history):  # Oldest to newest
+        chart_data.append({
+            'date': item.get('fecha_consulta', ''),
+            'mos': item.get('margen_seguridad', 0)
+        })
+    return jsonify({'history': chart_data})
+
 
 
 @app.route('/api/portfolio', methods=['POST'])
@@ -258,9 +277,10 @@ def add_ticker(current_user):
     if not ticker:
         return jsonify({'error': 'Ticker is required'}), 400
 
-    added = db.add_to_portfolio(current_user['id'], ticker, data.get('notes', ''))
+    list_type = data.get('list_type', 'watchlist')
+    added = db.add_to_portfolio(current_user['id'], ticker, data.get('notes', ''), list_type)
     if added:
-        return jsonify({'message': f'{ticker} added to portfolio', 'ticker': ticker}), 201
+        return jsonify({'message': f'{ticker} added to portfolio', 'ticker': ticker, 'list_type': list_type}), 201
     else:
         return jsonify({'error': f'{ticker} already in portfolio'}), 409
 
@@ -283,6 +303,7 @@ def update_portfolio_item(current_user, ticker):
     data = request.json or {}
     purchase_price = data.get('purchase_price')
     shares = data.get('shares')
+    list_type = data.get('list_type')
     
     if purchase_price is not None:
         try:
@@ -296,7 +317,7 @@ def update_portfolio_item(current_user, ticker):
         except ValueError:
             shares = None
             
-    updated = db.update_portfolio_position(current_user['id'], ticker, purchase_price, shares)
+    updated = db.update_portfolio_position(current_user['id'], ticker, purchase_price, shares, list_type)
     if updated:
         return jsonify({'message': f'{ticker.upper()} position updated'})
     else:

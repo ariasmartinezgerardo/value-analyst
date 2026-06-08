@@ -38,6 +38,9 @@ WACC_BY_SECTOR = {
 }
 
 # ─── Sector Benchmarks (Medians for PER, ROIC) ───────────────────
+# TODO(M2): These benchmarks are currently static and represent historical medians.
+# Short-term: Update these manually once a year.
+# Long-term: Implement an automated dynamic calculation fetching median metrics from a universe of stocks per sector.
 SECTOR_BENCHMARKS = {
     'technology': {'pe': 25, 'roic': 15, 'gross_margin': 0.50},
     'healthcare': {'pe': 20, 'roic': 12, 'gross_margin': 0.55},
@@ -143,6 +146,33 @@ def _avg(values, exclude_none=True):
     return sum(values) / len(values)
 
 
+def _weighted_avg(values, exclude_none=True):
+    """
+    Calculate a recency-weighted average of a list (most recent value first).
+    Weights: index 0 gets weight 4, index 1 gets 3, index 2 gets 2, rest get 1.
+    This prevents old extreme outliers from distorting the average when
+    recent performance has been consistently strong (e.g. PLTR's -72% ROIC in 2022
+    dragging down a current 22% to a misleading -19% average).
+    """
+    if exclude_none:
+        pairs = [(v, i) for i, v in enumerate(values) if v is not None]
+    else:
+        pairs = list(enumerate(values))
+        pairs = [(v, i) for i, v in pairs]
+    if not pairs:
+        return None
+    
+    weight_map = {0: 4, 1: 3, 2: 2}  # Recent years get more weight
+    total_weight = 0
+    weighted_sum = 0
+    for v, idx in pairs:
+        w = weight_map.get(idx, 1)
+        weighted_sum += v * w
+        total_weight += w
+    
+    return weighted_sum / total_weight if total_weight > 0 else None
+
+
 def _trend(values):
     """
     Determine trend from a list of values (most recent first).
@@ -183,14 +213,17 @@ def _growth_rate(values):
     Returns RAW CAGR (uncapped), or None if insufficient data.
     The cap is applied per-archetype in run_full_analysis.
     """
-    clean = [v for v in values if v is not None and v > 0]
-    if len(clean) < 2:
-        return None  # insufficient data — caller decides default
-    n = len(clean) - 1
-    if clean[-1] <= 0 or clean[0] <= 0:
+    valid = [v for v in values if v is not None]
+    if len(valid) < 2:
         return None
-    cagr = (clean[0] / clean[-1]) ** (1 / n) - 1
-    return max(min(cagr, 1.0), -0.10)  # floor at -10%, raw cap at 100%
+        
+    # If the most recent or the oldest value is negative/zero, CAGR is undefined
+    if valid[0] <= 0 or valid[-1] <= 0:
+        return None
+        
+    n = len(valid) - 1
+    cagr = (valid[0] / valid[-1]) ** (1 / n) - 1
+    return max(min(cagr, 1.0), -0.10)
 
 
 # ─── FCF REAL ─────────────────────────────────────────────────────
@@ -232,7 +265,7 @@ def calculate_fcf_real(data: dict) -> dict:
         sbc_latest = abs(sbc[0] or 0) if sbc and sbc[0] is not None else 0
         fcf_ttm = fcf_ttm_pre_sbc - sbc_latest
             
-    hist_avg = _avg(fcf_real_values[1:]) if len(fcf_real_values) > 1 else _avg(fcf_real_values)
+    hist_avg = _weighted_avg(fcf_real_values[1:]) if len(fcf_real_values) > 1 else _weighted_avg(fcf_real_values)
     
     return {
         'fcf_real_values': fcf_real_values,
@@ -293,7 +326,12 @@ def calculate_roic(data: dict) -> dict:
         else:
             roic_values.append(None)
 
-    hist_avg = _avg(roic_values[1:]) if len(roic_values) > 1 else _avg(roic_values)
+    # For the historical average, clamp extreme outliers to [-30%, +60%] 
+    # so a single catastrophic year doesn't distort the picture.
+    # Raw roic_values remain untouched for display purposes.
+    hist_values = roic_values[1:] if len(roic_values) > 1 else roic_values
+    clamped = [max(-30, min(60, v)) if v is not None else None for v in hist_values]
+    hist_avg = _weighted_avg(clamped)
 
     return {
         'roic_values': roic_values,
@@ -555,20 +593,40 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
 
 # ─── VARIABLE WACC ────────────────────────────────────────────────
 
-def get_wacc(sector: str, market_cap: float) -> float:
+def get_wacc(sector: str, market_cap: float, beta: float = None,
+             risk_free_rate: float = 0.04, archetype_id: str = None) -> float:
     """
     Calculate WACC adjusted by sector and company size.
+    Uses CAPM (Capital Asset Pricing Model) if Beta is available.
+    risk_free_rate: Live US 10Y Treasury yield (default 4.0% fallback).
     Mega caps get a slight discount, small caps a premium.
     """
     sector_lower = (sector or '').lower().strip()
-    base_wacc = 0.10  # default
 
+    # 1. Base WACC from sector table (Fallback)
+    base_wacc = 0.10  # default
     for key, val in WACC_BY_SECTOR.items():
         if key in sector_lower:
             base_wacc = val
             break
 
-    # Adjust by market cap
+    # 2. CAPM WACC (if Beta is available)
+    # Ke = Rf + Beta * ERP
+    # rf is now live (from ^TNX), ERP = 5.5% long-run historical average
+    if beta and beta > 0:
+        erp = 0.055
+        capm_wacc = risk_free_rate + beta * erp
+
+        # Blend it with sector base to avoid extreme volatility (e.g. beta 3.0 → 20.5% wacc)
+        # Give 70% weight to CAPM, 30% to sector baseline
+        base_wacc = (capm_wacc * 0.70) + (base_wacc * 0.30)
+    else:
+        # No beta: anchor to risk-free rate shift vs baseline 4%
+        # If rates rose from 4% to 5%, nudge the sector baseline up proportionally
+        rf_delta = risk_free_rate - 0.04
+        base_wacc = base_wacc + rf_delta * 0.5  # partial pass-through
+
+    # 3. Adjust by market cap (Size Premium)
     if market_cap and market_cap > 200e9:
         base_wacc -= 0.01  # Mega cap discount
     elif market_cap and market_cap > 10e9:
@@ -578,7 +636,18 @@ def get_wacc(sector: str, market_cap: float) -> float:
     else:
         base_wacc += 0.02  # Small cap premium
 
-    return max(base_wacc, 0.06)  # Floor at 6%
+    # 4. Archetype-based bounds
+    min_wacc = 0.06
+    max_wacc = 0.15
+    if archetype_id == 'speculative':
+        min_wacc = 0.12
+        max_wacc = 0.25
+    elif archetype_id == 'hypergrowth':
+        min_wacc = 0.10
+        max_wacc = 0.20
+
+    # Clamp WACC to sane bounds
+    return max(min(base_wacc, max_wacc), min_wacc)
 
 
 # ─── GRAHAM VALUATION ────────────────────────────────────────────
@@ -597,7 +666,8 @@ def graham_valuation(eps_ttm: float, growth_rate_pct: float) -> float:
     if not eps_ttm or eps_ttm <= 0:
         return 0
 
-    v = (eps_ttm * (GRAHAM_BASE_PE + GRAHAM_GROWTH_MULT * growth_rate_pct) * GRAHAM_BOND_YIELD_1962) / CURRENT_AAA_BOND_YIELD
+    safe_growth = max(growth_rate_pct, 0)
+    v = (eps_ttm * (GRAHAM_BASE_PE + GRAHAM_GROWTH_MULT * safe_growth) * GRAHAM_BOND_YIELD_1962) / CURRENT_AAA_BOND_YIELD
     return max(v, 0)
 
 
@@ -605,13 +675,15 @@ def graham_valuation(eps_ttm: float, growth_rate_pct: float) -> float:
 
 def dcf_valuation(fcf_current: float, growth_rate: float, shares: int,
                   total_debt: float = 0, cash: float = 0,
-                  wacc: float = 0.10, years: int = 10) -> float:
+                  wacc: float = 0.10, years: int = 10) -> tuple:
     """
     Standard single-phase DCF Valuation.
     Used for Classic Value archetype.
+    Returns: (intrinsic_value_per_share, terminal_pct)
+    terminal_pct = % of EV that comes from the terminal value.
     """
     if not fcf_current or fcf_current <= 0 or not shares or shares <= 0:
-        return 0
+        return 0, None
 
     # Project future FCFs
     projected_fcfs = []
@@ -628,27 +700,31 @@ def dcf_valuation(fcf_current: float, growth_rate: float, shares: int,
     else:
         discounted_terminal = 0
 
-    # Enterprise value → Equity value → Per-share
-    enterprise_value = sum(projected_fcfs) + discounted_terminal
-    equity_value = enterprise_value + (cash or 0) - (total_debt or 0)
+    pv_phase = sum(projected_fcfs)
+    ev = pv_phase + discounted_terminal
+    terminal_pct = round(discounted_terminal / ev * 100, 1) if ev > 0 else None
+
+    equity_value = ev + (cash or 0) - (total_debt or 0)
     intrinsic_value = equity_value / shares
-    return max(intrinsic_value, 0)
+    return max(intrinsic_value, 0), terminal_pct
 
 
 # ─── MULTI-PHASE DCF (COMPOUNDERS) ───────────────────────────────
 
 def multiphase_dcf_valuation(fcf_current: float, high_growth: float, shares: int,
-                              total_debt: float = 0, cash: float = 0,
-                              wacc: float = 0.10,
-                              high_years: int = 5, fade_years: int = 5) -> float:
+                               total_debt: float = 0, cash: float = 0,
+                               wacc: float = 0.10,
+                               high_years: int = 5, fade_years: int = 5) -> tuple:
     """
     Multi-phase DCF for Compounder archetype:
     Phase 1 (years 1-5): High growth rate
     Phase 2 (years 6-10): Linear fade from high growth to terminal growth
     Terminal: Gordon Growth Model
+    Returns: (intrinsic_value_per_share, terminal_pct)
+    terminal_pct = % of EV that comes from the terminal value.
     """
     if not fcf_current or fcf_current <= 0 or not shares or shares <= 0:
-        return 0
+        return 0, None
 
     projected_fcfs = []
     fcf = fcf_current
@@ -677,9 +753,12 @@ def multiphase_dcf_valuation(fcf_current: float, high_growth: float, shares: int
     else:
         pv_tv = 0
 
-    ev = sum(projected_fcfs) + pv_tv
+    pv_phase = sum(projected_fcfs)
+    ev = pv_phase + pv_tv
+    terminal_pct = round(pv_tv / ev * 100, 1) if ev > 0 else None
+
     equity_value = ev + (cash or 0) - (total_debt or 0)
-    return max(equity_value / shares, 0)
+    return max(equity_value / shares, 0), terminal_pct
 
 
 # ─── REVENUE-BASED DCF (HYPERGROWTH) ─────────────────────────────
@@ -769,7 +848,7 @@ def ddm_valuation(dividend_per_share: float, growth_rate: float,
 
 def reverse_dcf(current_price: float, fcf_current: float, shares: int,
                 total_debt: float = 0, cash: float = 0,
-                wacc: float = 0.10, years: int = 10) -> float:
+                wacc: float = 0.10, years: int = 10, archetype_id: str = 'classic_value') -> float:
     """
     Calculate the growth rate implied by the current market price.
     Uses binary search to find the growth rate that produces the market price.
@@ -784,7 +863,10 @@ def reverse_dcf(current_price: float, fcf_current: float, shares: int,
     
     for _ in range(50):  # max iterations for binary search
         mid = (low + high) / 2
-        computed = dcf_valuation(fcf_current, mid, shares, total_debt, cash, wacc, years)
+        if archetype_id in ('compounder',):
+            computed, _ = multiphase_dcf_valuation(fcf_current, mid, shares, total_debt, cash, wacc)
+        else:
+            computed, _ = dcf_valuation(fcf_current, mid, shares, total_debt, cash, wacc, years)
         if computed is None or computed <= 0:
             low = mid
             continue
@@ -811,26 +893,32 @@ def sensitivity_table(fcf_current: float, shares: int,
     if not fcf_current or fcf_current <= 0 or not shares or shares <= 0:
         return None
 
-    wacc_offsets = [-0.02, 0, 0.02]
-    growth_offsets = [-0.03, 0, 0.03]
+    # M4 FIX: Use proportional offsets instead of absolute hardcoded values.
+    # WACC: ±15% of base, minimum ±1.0% absolute shift
+    wacc_shift = max(base_wacc * 0.15, 0.01)
+    wacc_offsets = [-wacc_shift, 0, wacc_shift]
     
+    # Growth: ±20% of base, minimum ±2.0% absolute shift
+    growth_shift = max(abs(base_growth) * 0.20, 0.02)
+    growth_offsets = [-growth_shift, 0, growth_shift]
+
     wacc_values = [round(base_wacc + o, 3) for o in wacc_offsets]
     growth_values = [round(max(base_growth + o, 0.01), 3) for o in growth_offsets]
-    
-    # Use appropriate DCF model
+
+    # Use appropriate DCF model (unpack tuple, ignore terminal_pct for table)
     use_multiphase = archetype_id in ('compounder', 'hypergrowth')
-    
+
     matrix = []
     for w in wacc_values:
         row = []
         for g in growth_values:
             if use_multiphase:
-                val = multiphase_dcf_valuation(fcf_current, g, shares, total_debt, cash, w)
+                val, _ = multiphase_dcf_valuation(fcf_current, g, shares, total_debt, cash, w)
             else:
-                val = dcf_valuation(fcf_current, g, shares, total_debt, cash, w)
+                val, _ = dcf_valuation(fcf_current, g, shares, total_debt, cash, w)
             row.append(round(val, 2) if val else 0)
         matrix.append(row)
-    
+
     return {
         'wacc_values': wacc_values,
         'growth_values': growth_values,
@@ -852,48 +940,111 @@ def margin_of_safety(intrinsic_value: float, market_price: float) -> float:
 
 # ─── QUALITY ASSESSMENT ──────────────────────────────────────────
 
-def assess_quality(roic_avg, fcf_trend, eps_trend, mos, non_gaap_flag) -> str:
+def assess_quality(naranjos_score: float, non_gaap_flag: str) -> str:
     """
-    Determine if a business is 'Alta Calidad' based on value investing criteria.
+    Determine if a business is 'Alta Calidad' based on Naranjos Score.
     """
     if non_gaap_flag == '🚫 No Elegible':
         return '🚫 No Elegible'
 
-    score = 0
-
-    # ROIC > 15% suggests durable competitive advantage (moat)
-    if roic_avg and roic_avg > 20:
-        score += 3
-    elif roic_avg and roic_avg > 15:
-        score += 2
-    elif roic_avg and roic_avg > 10:
-        score += 1
-
-    # FCF trend
-    if fcf_trend == '↑':
-        score += 2
-    elif fcf_trend == '→':
-        score += 1
-
-    # EPS trend
-    if eps_trend == '↑':
-        score += 2
-    elif eps_trend == '→':
-        score += 1
-
-    # Margin of Safety
-    if mos and mos > 30:
-        score += 2
-    elif mos and mos > 20:
-        score += 1
-
-    if score >= 7:
+    if naranjos_score >= 75:
         return '⭐ Alta Calidad'
-    elif score >= 4:
+    elif naranjos_score >= 50:
         return '✅ Calidad Aceptable'
-    elif score >= 2:
+    elif naranjos_score >= 30:
         return '⚠️ Calidad Media'
     return '❌ Calidad Baja'
+
+
+# ─── NARANJOS SCORE ──────────────────────────────────────────────
+
+def calculate_naranjos_score(mos, ms_rel, roic_avg, fcf_trend, eps_trend, net_debt_ebitda, interest_coverage, insider_pct, has_buybacks, methodology=None, peg=None, rule_of_40=None) -> tuple:
+    """
+    Calculate the proprietary Naranjos Score (0-100), combining various metrics
+    into a single easily understandable quality and valuation score.
+    Returns: (score, details_list)
+    """
+    score = 0
+    details = []
+    
+    if methodology == 'growth':
+        # Substituir MoS por métricas Growth (40 pts)
+        if peg and peg < 1.0: score += 25; details.append('PEG < 1.0 (+25 pts)')
+        elif peg and peg < 1.5: score += 20; details.append('PEG < 1.5 (+20 pts)')
+        elif peg and peg < 2.0: score += 15; details.append('PEG < 2.0 (+15 pts)')
+        else: details.append('PEG alto o desconocido (+0 pts)')
+        
+        if rule_of_40 and rule_of_40 >= 60: score += 15; details.append('Rule of 40 ≥ 60 (+15 pts)')
+        elif rule_of_40 and rule_of_40 >= 40: score += 10; details.append('Rule of 40 ≥ 40 (+10 pts)')
+        else: details.append('Rule of 40 baja o desconocida (+0 pts)')
+    else:
+        # MoS Absoluto (25%)
+        if mos:
+            if mos > 40: score += 25; details.append('Margen de Seguridad > 40% (+25 pts)')
+            elif mos > 20: score += 20; details.append('Margen de Seguridad > 20% (+20 pts)')
+            elif mos > 0: score += 15; details.append('Margen de Seguridad > 0% (+15 pts)')
+            elif mos > -20: score += 5; details.append('Margen de Seguridad > -20% (+5 pts)')
+            else: details.append('Margen de Seguridad muy bajo (+0 pts)')
+        else: details.append('Margen de Seguridad desconocido (+0 pts)')
+
+        # MoS Relativo (15%)
+        if ms_rel:
+            if ms_rel > 20: score += 15; details.append('Descuento Relativo > 20% (+15 pts)')
+            elif ms_rel > 10: score += 10; details.append('Descuento Relativo > 10% (+10 pts)')
+            elif ms_rel > 0: score += 5; details.append('Descuento Relativo > 0% (+5 pts)')
+            else: details.append('Sin Descuento Relativo (+0 pts)')
+        else: details.append('Descuento Relativo desconocido (+0 pts)')
+        
+    # Calidad (ROIC + FCF Trend) (25%)
+    if roic_avg:
+        if roic_avg > 20: score += 15; details.append('ROIC Medio > 20% (+15 pts)')
+        elif roic_avg > 15: score += 10; details.append('ROIC Medio > 15% (+10 pts)')
+        elif roic_avg > 10: score += 5; details.append('ROIC Medio > 10% (+5 pts)')
+        else: details.append('ROIC Medio bajo (+0 pts)')
+    else: details.append('ROIC Medio desconocido (+0 pts)')
+        
+    if fcf_trend == '↑': score += 10; details.append('Flujo de Caja Libre creciente (+10 pts)')
+    elif fcf_trend == '→': score += 5; details.append('Flujo de Caja Libre estable (+5 pts)')
+    else: details.append('Flujo de Caja Libre sin crecimiento (+0 pts)')
+    
+    # Salud Financiera (Deuda) (15%)
+    # Use the best metric available between Net Debt/EBITDA and Interest Coverage
+    debt_score = 0
+    debt_detail = ''
+    if net_debt_ebitda is not None:
+        if net_debt_ebitda < 1.0: debt_score = 15; debt_detail = 'Deuda/EBITDA Excelente < 1x (+15 pts)'
+        elif net_debt_ebitda < 2.0: debt_score = 10; debt_detail = 'Deuda/EBITDA Sana < 2x (+10 pts)'
+        elif net_debt_ebitda < 3.0: debt_score = 5; debt_detail = 'Deuda/EBITDA Aceptable < 3x (+5 pts)'
+        else: debt_detail = 'Deuda/EBITDA Alta (+0 pts)'
+    
+    int_cov_score = 0
+    int_cov_detail = ''
+    if interest_coverage is not None:
+        if interest_coverage > 10: int_cov_score = 15; int_cov_detail = 'Cobertura de Intereses > 10x (+15 pts)'
+        elif interest_coverage > 5: int_cov_score = 10; int_cov_detail = 'Cobertura de Intereses > 5x (+10 pts)'
+        else: int_cov_detail = 'Cobertura de Intereses Baja (+0 pts)'
+        
+    if debt_score >= int_cov_score and debt_detail:
+        score += debt_score; details.append(debt_detail)
+    elif int_cov_detail:
+        score += int_cov_score; details.append(int_cov_detail)
+    else:
+        details.append('Sin datos suficientes de Deuda (+0 pts)')
+    
+    # Momentum (EPS trend) (10%)
+    if eps_trend == '↑': score += 10; details.append('Beneficios (EPS) crecientes (+10 pts)')
+    elif eps_trend == '→': score += 5; details.append('Beneficios (EPS) estables (+5 pts)')
+    else: details.append('Beneficios (EPS) sin crecimiento (+0 pts)')
+    
+    # Gobernanza (Insider + Buybacks) (10%)
+    if insider_pct and (insider_pct * 100) > 1.0: score += 5; details.append('Insiders poseen > 1% (+5 pts)')
+    elif insider_pct and (insider_pct * 100) > 0.1: score += 2; details.append('Insiders poseen > 0.1% (+2 pts)')
+    else: details.append('Poca posesión de Insiders (+0 pts)')
+    
+    if has_buybacks: score += 5; details.append('Recompra de acciones detectada (+5 pts)')
+    else: details.append('Sin recompra de acciones (+0 pts)')
+        
+    return min(100, max(0, score)), details
 
 
 def _format_usd(val):
@@ -1067,6 +1218,158 @@ def generate_qualitative_audit(data: dict, analysis: dict) -> dict:
     }
 
 
+# ─── PIOTROSKI F-SCORE (VALUE TRAP DETECTOR) ─────────────────────
+
+def calculate_piotroski_score(data: dict) -> dict:
+    """
+    Piotroski F-Score: 9-point binary scoring system for financial health.
+    Designed to distinguish genuinely cheap stocks from value traps.
+
+    Categories:
+    - Profitability (4 pts): ROA, CFO, improving ROA, CFO > ROA
+    - Leverage/Liquidity (3 pts): long-term debt, current ratio, dilution
+    - Operating Efficiency (2 pts): gross margin, asset turnover
+
+    Score: 0-2 = Weak (likely value trap), 3-6 = Average, 7-9 = Strong
+    """
+    score = 0
+    details = []
+
+    net_income = data.get('net_income_values', [])
+    total_assets = data.get('total_assets_values', [])
+    ocf = data.get('operating_cashflow_values', [])
+    long_term_debt = data.get('long_term_debt_values', [])
+    current_assets = data.get('current_assets_values', [])
+    current_liab = data.get('current_liabilities_values', [])
+    shares = data.get('shares_history', [])
+    gross_profit = data.get('gross_profit_values', [])
+    revenue = data.get('revenue_values', [])
+
+    def _safe(lst, i, default=None):
+        return lst[i] if lst and i < len(lst) and lst[i] is not None else default
+
+    # ─ Profitability ────────────────────────────────────────────
+    # F1: ROA > 0 (Net Income / Total Assets > 0)
+    ni0 = _safe(net_income, 0)
+    ta0 = _safe(total_assets, 0)
+    roa0 = (ni0 / ta0) if ni0 and ta0 and ta0 > 0 else None
+    if roa0 is not None and roa0 > 0:
+        score += 1
+        details.append('F1 ✅ ROA positivo')
+    else:
+        details.append('F1 ❌ ROA negativo o sin datos')
+
+    # F2: CFO > 0
+    cfo0 = _safe(ocf, 0)
+    if cfo0 is not None and cfo0 > 0:
+        score += 1
+        details.append('F2 ✅ Flujo Operativo positivo')
+    else:
+        details.append('F2 ❌ Flujo Operativo negativo o sin datos')
+
+    # F3: ROA improving (current > prior year)
+    ni1 = _safe(net_income, 1)
+    ta1 = _safe(total_assets, 1)
+    roa1 = (ni1 / ta1) if ni1 and ta1 and ta1 > 0 else None
+    if roa0 is not None and roa1 is not None and roa0 > roa1:
+        score += 1
+        details.append('F3 ✅ ROA mejorando año a año')
+    else:
+        details.append('F3 ❌ ROA estable o deteriorándose')
+
+    # F4: Accrual quality — CFO > ROA (real cash > accounting profits)
+    if roa0 is not None and cfo0 is not None and ta0 and ta0 > 0:
+        cfo_ratio = cfo0 / ta0
+        if cfo_ratio > roa0:
+            score += 1
+            details.append('F4 ✅ Calidad de ganancias alta (CFO > ROA)')
+        else:
+            details.append('F4 ❌ Ganancias superiores al cash real (posible contabilidad agresiva)')
+    else:
+        details.append('F4 — Sin datos suficientes para calidad de ganancias')
+
+    # ─ Leverage / Liquidity ─────────────────────────────────────
+    # F5: Long-term debt ratio decreasing
+    ltd0 = _safe(long_term_debt, 0)
+    ltd1 = _safe(long_term_debt, 1)
+    if ltd0 is not None and ltd1 is not None and ta0 and ta1:
+        lev0 = ltd0 / ta0 if ta0 > 0 else None
+        lev1 = ltd1 / ta1 if ta1 > 0 else None
+        if lev0 is not None and lev1 is not None and lev0 <= lev1:
+            score += 1
+            details.append('F5 ✅ Ratio de deuda a largo plazo estable o mejorando')
+        else:
+            details.append('F5 ❌ Apalancamiento a largo plazo aumentando')
+    else:
+        details.append('F5 — Sin datos de deuda a largo plazo')
+
+    # F6: Current ratio improving (liquidity)
+    ca0 = _safe(current_assets, 0)
+    cl0 = _safe(current_liab, 0)
+    ca1 = _safe(current_assets, 1)
+    cl1 = _safe(current_liab, 1)
+    cr0 = (ca0 / cl0) if ca0 and cl0 and cl0 > 0 else None
+    cr1 = (ca1 / cl1) if ca1 and cl1 and cl1 > 0 else None
+    if cr0 is not None and cr1 is not None and cr0 > cr1:
+        score += 1
+        details.append('F6 ✅ Ratio de liquidez corriente mejorando')
+    else:
+        details.append('F6 ❌ Liquidez corriente estable o deteriorándose')
+
+    # F7: No new shares issued (dilution check)
+    sh0 = _safe(shares, 0)
+    sh1 = _safe(shares, 1)
+    if sh0 is not None and sh1 is not None:
+        if sh0 <= sh1 * 1.02:  # Allow up to 2% tolerance
+            score += 1
+            details.append('F7 ✅ Sin dilución significativa (acciones estables o reduciéndose)')
+        else:
+            details.append('F7 ❌ Dilución detectada: aumento en acciones en circulación')
+    else:
+        details.append('F7 — Sin datos históricos de acciones')
+
+    # ─ Operating Efficiency ──────────────────────────────────────
+    # F8: Gross margin improving
+    rev0 = _safe(revenue, 0)
+    gp0 = _safe(gross_profit, 0)
+    rev1 = _safe(revenue, 1)
+    gp1 = _safe(gross_profit, 1)
+    gm0 = (gp0 / rev0) if gp0 and rev0 and rev0 > 0 else None
+    gm1 = (gp1 / rev1) if gp1 and rev1 and rev1 > 0 else None
+    if gm0 is not None and gm1 is not None and gm0 > gm1:
+        score += 1
+        details.append('F8 ✅ Margen bruto mejorando')
+    else:
+        details.append('F8 ❌ Margen bruto estable o deteriorándose')
+
+    # F9: Asset turnover improving (Revenue / Total Assets)
+    at0 = (rev0 / ta0) if rev0 and ta0 and ta0 > 0 else None
+    at1 = (rev1 / ta1) if rev1 and ta1 and ta1 > 0 else None
+    if at0 is not None and at1 is not None and at0 > at1:
+        score += 1
+        details.append('F9 ✅ Rotación de activos mejorando (eficiencia en alza)')
+    else:
+        details.append('F9 ❌ Rotación de activos estable o deteriorándose')
+
+    # ─ Verdict ──────────────────────────────────────────────────
+    if score >= 7:
+        verdict = '💪 Sano'
+        risk_level = 'low'
+    elif score >= 4:
+        verdict = '⚠️ Aceptable'
+        risk_level = 'medium'
+    else:
+        verdict = '🚨 Señal de Value Trap'
+        risk_level = 'high'
+
+    return {
+        'piotroski_score': score,
+        'piotroski_verdict': verdict,
+        'piotroski_risk_level': risk_level,
+        'piotroski_details': details,
+    }
+
+
 # ─── FULL ANALYSIS ───────────────────────────────────────────────
 
 def run_full_analysis(data: dict) -> dict:
@@ -1177,20 +1480,15 @@ def run_full_analysis(data: dict) -> dict:
         methodology = 'speculative'
         methodology_label = '⚠️ Especulativo'
 
-    # ─── Variable WACC ───────────────────────────────────────
-    wacc = get_wacc(sector, market_cap)
+    # ─── Variable WACC (with live risk-free rate) ───────────
+    beta = data.get('beta')
+    risk_free_rate = data.get('risk_free_rate', 0.04)
+    wacc = get_wacc(sector, market_cap, beta=beta, risk_free_rate=risk_free_rate, archetype_id=archetype_id)
 
     # ─── Currency / ADR Multiplier ───────────────────────────
-    # Derives conversion factor from financial-statement currency to trading currency
-    # Also captures ADR ratio (e.g., 1 TSM ADR = 5 ordinary shares)
+    # fetcher.py already forces all financial metrics into USD natively using live FX rates.
+    # We no longer need to derive a multiplier from EPS ratios, which is prone to Yahoo Finance API errors.
     multiplier = 1.0
-    if eps_ttm and eps_values and len(eps_values) > 0 and eps_values[0] is not None:
-        eps_financial = eps_values[0]
-        if abs(eps_financial) > 0.001 and abs(eps_ttm) > 0.001:
-            candidate_mult = eps_financial / eps_ttm
-            # Sanity check: multiplier should be reasonable
-            if 0.01 < abs(candidate_mult) < 10000:
-                multiplier = candidate_mult
 
     # ─── Get FCF for DCF ─────────────────────────────────────
     fcf_real_values = fcf_result.get('fcf_real_values', [])
@@ -1219,6 +1517,19 @@ def run_full_analysis(data: dict) -> dict:
                 growth_rate = 0.03  # 3% conservative growth for normalized earnings
                 growth_source = 'normalized'
 
+
+    excess_capex_warning = None
+    capex_values = data.get('capex_values', [])
+    if capex_values and len(capex_values) >= 3 and fcf_for_dcf and fcf_for_dcf > 0:
+        recent_capex = capex_values[0]
+        hist_capex = [c for c in capex_values[1:] if c and c > 0]
+        if recent_capex and hist_capex:
+            avg_hist_capex = sum(hist_capex) / len(hist_capex)
+            if recent_capex > avg_hist_capex * 1.5:
+                excess_capex_warning = recent_capex - avg_hist_capex
+                logger.info(f"{ticker}: Exceptional CAPEX (Recent: {recent_capex/1e9:.1f}B, Hist Avg: {avg_hist_capex/1e9:.1f}B). "
+                            f"Noted {excess_capex_warning/1e9:.1f}B as potential growth CAPEX (informative only).")
+
     # Get most recent debt and cash (financial statement currency)
     debt_list = data.get('total_debt_values', [])
     cash_list = data.get('cash_values', [])
@@ -1235,13 +1546,15 @@ def run_full_analysis(data: dict) -> dict:
     alt_model_name = ''
     valuation_models_used = []
 
+    terminal_pct = None  # % of valuation from terminal value (transparency metric)
+
     if archetype_id == 'classic_value':
         # Classic Value: Graham (only if sector PE < 20x) + Standard DCF
         sector_lower = (sector or '').lower()
         sector_pe = SECTOR_BENCHMARKS.get(sector_lower, {}).get('pe', 15)
         if sector_pe < 20:
             graham_value = graham_valuation(eps_ttm, growth_rate_pct)
-        dcf_value = dcf_valuation(
+        dcf_value, terminal_pct = dcf_valuation(
             fcf_current=fcf_for_dcf, growth_rate=growth_rate,
             shares=shares, total_debt=current_debt, cash=current_cash, wacc=wacc
         )
@@ -1270,7 +1583,7 @@ def run_full_analysis(data: dict) -> dict:
 
     elif archetype_id == 'compounder':
         # Compounder: Multi-Phase DCF
-        dcf_value = multiphase_dcf_valuation(
+        dcf_value, terminal_pct = multiphase_dcf_valuation(
             fcf_current=fcf_for_dcf, high_growth=growth_rate,
             shares=shares, total_debt=current_debt, cash=current_cash, wacc=wacc
         )
@@ -1336,7 +1649,7 @@ def run_full_analysis(data: dict) -> dict:
     else:  # 'speculative'
         # Speculative: No reliable valuation possible
         # Try DCF if we somehow have positive FCF
-        dcf_value = dcf_valuation(
+        dcf_value, _ = dcf_valuation(
             fcf_current=fcf_for_dcf, growth_rate=growth_rate,
             shares=shares, total_debt=current_debt, cash=current_cash, wacc=wacc + 0.02
         )
@@ -1380,7 +1693,8 @@ def run_full_analysis(data: dict) -> dict:
         total_debt=debt_for_reverse or 0,
         cash=cash_for_reverse or 0,
         wacc=wacc,
-    ) if methodology != 'speculative' else None
+        archetype_id=archetype_id,
+    ) if methodology not in ('speculative', 'book_value', 'dividend') else None
 
     # ─── Sensitivity Table (3×3) ─────────────────────────────
     sens_table = sensitivity_table(
@@ -1391,7 +1705,7 @@ def run_full_analysis(data: dict) -> dict:
         base_wacc=wacc,
         base_growth=growth_rate,
         archetype_id=archetype_id,
-    ) if methodology not in ('speculative', 'growth') and fcf_for_dcf and fcf_for_dcf > 0 else None
+    ) if methodology not in ('speculative', 'growth', 'book_value', 'dividend') and fcf_for_dcf and fcf_for_dcf > 0 else None
 
     # ─── PER & EV/FCF (Actuals) ──────────────────────────────
     per_actual = data.get('per_trailing')
@@ -1474,7 +1788,10 @@ def run_full_analysis(data: dict) -> dict:
     mult_avg_5y = None
     ms_rel = -100.0  # Default to highly overvalued if no data exists
 
-    if ev_fcf and ev_fcf > 0 and ev_fcf_avg_5y and ev_fcf_avg_5y > 0:
+    # Force PER for financials and REITs because FCF is distorted
+    allow_ev_fcf = archetype_id not in ('financial', 'reit_utility')
+
+    if allow_ev_fcf and ev_fcf and ev_fcf > 0 and ev_fcf_avg_5y and ev_fcf_avg_5y > 0:
         multiple_type = 'EV/FCF'
         mult_actual = ev_fcf
         mult_avg_5y = ev_fcf_avg_5y
@@ -1492,77 +1809,6 @@ def run_full_analysis(data: dict) -> dict:
             mult_actual = calc_per_actual
             mult_avg_5y = per_avg_5y
             ms_rel = ((per_avg_5y - calc_per_actual) / per_avg_5y) * 100
-
-    # ─── Traffic Light (Semáforo) Lógica ─────────────────────
-    non_gaap_flag = non_gaap.get('non_gaap_flag', '')
-
-    estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
-    alerta_compra = 0
-
-    if non_gaap_flag == '🚫 No Elegible':
-        estado_semaforo = '🚫 NO ELEGIBLE'
-        alerta_compra = 0
-    elif methodology == 'value':
-        has_relative_data = multiple_type != 'N/A'
-        if has_relative_data:
-            # Full signal: both absolute and relative margins available
-            if ms_abs > 15.0 and ms_rel > 10.0:
-                estado_semaforo = '🟢 STRONG BUY'
-                alerta_compra = 1
-            elif ms_abs < 0.0 and ms_rel < 0.0:
-                estado_semaforo = '🔴 SOBREVALORADA'
-                alerta_compra = 0
-            else:
-                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
-        else:
-            # BACKTEST FIX B9: Fallback when no historical multiples available.
-            # Without ms_rel, the Strong Buy was mathematically impossible even
-            # with 70%+ MoS (AAPL 2016, BABA 2022, etc.). Use ms_abs alone
-            # with a higher threshold (30% instead of 15%) to compensate for
-            # the missing relative confirmation.
-            if ms_abs > 30.0:
-                estado_semaforo = '🟢 STRONG BUY'
-                alerta_compra = 1
-            elif ms_abs < -15.0:
-                estado_semaforo = '🔴 SOBREVALORADA'
-                alerta_compra = 0
-            else:
-                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
-    elif methodology == 'growth':
-        peg = growth_metrics.get('peg_forward') or growth_metrics.get('peg_trailing')
-        rule40 = growth_metrics.get('rule_of_40')
-        if peg and rule40:
-            if peg < 1.5 and rule40 >= 40:
-                estado_semaforo = '🟢 GROWTH BUY'
-                alerta_compra = 1
-            elif peg > 2.5 or rule40 < 20:
-                estado_semaforo = '🔴 GROWTH OVERPRICED'
-                alerta_compra = 0
-            else:
-                estado_semaforo = '🟡 GROWTH HOLD'
-        else:
-            estado_semaforo = '🟡 SIN DATOS GROWTH'
-    elif methodology == 'speculative':
-        estado_semaforo = '⚠️ ALTO RIESGO'
-        alerta_compra = 0
-    else:  # book_value, dividend
-        if ms_abs > 15.0:
-            estado_semaforo = '🟢 STRONG BUY'
-            alerta_compra = 1
-        elif ms_abs < 0.0:
-            estado_semaforo = '🔴 SOBREVALORADA'
-            alerta_compra = 0
-        else:
-            estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
-
-    # ─── Quality Assessment ──────────────────────────────────
-    calidad = assess_quality(
-        roic_result.get('roic_hist_avg'),
-        fcf_result.get('fcf_trend'),
-        eps_trend,
-        mos,
-        non_gaap_flag
-    )
 
     # ─── Margin Analysis (I6) ────────────────────────────────
     gross_profit_values = data.get('gross_profit_values', [])
@@ -1590,13 +1836,121 @@ def run_full_analysis(data: dict) -> dict:
     current_ebit = ebit_values[0] if ebit_values else 0
 
     net_debt = current_debt - current_cash
-    net_debt_ebitda = net_debt / current_ebitda if current_ebitda and current_ebitda > 0 else None
+    if current_ebitda and current_ebitda > 0:
+        net_debt_ebitda = net_debt / current_ebitda
+    elif current_ebitda is not None and current_ebitda <= 0:
+        # L1 FIX: Heavy penalty if the company has net debt but negative EBITDA
+        net_debt_ebitda = 99.9 if net_debt > 0 else 0.0
+    else:
+        net_debt_ebitda = None
     
     interest_coverage = None
     if current_interest and current_interest > 0 and current_ebit and current_ebit > 0:
         interest_coverage = current_ebit / current_interest
     elif current_interest == 0 and current_ebit and current_ebit > 0:
         interest_coverage = 999  # Effectively infinite coverage if no debt interest
+
+    # ─── Governance ──────────────────────────────────────────
+    has_buybacks = False
+    shares_history = data.get('shares_history', [])
+    if len(shares_history) >= 2 and shares_history[0] and shares_history[-1] and shares_history[0] < shares_history[-1]:
+        has_buybacks = True
+    insider_pct = data.get('held_percent_insiders', 0) or 0
+
+    # ─── Naranjos Score ──────────────────────────────────────
+    naranjos_score, naranjos_details = calculate_naranjos_score(
+        mos=mos,
+        ms_rel=ms_rel,
+        roic_avg=roic_result.get('roic_hist_avg'),
+        fcf_trend=fcf_result.get('fcf_trend'),
+        eps_trend=eps_trend,
+        net_debt_ebitda=net_debt_ebitda,
+        interest_coverage=interest_coverage,
+        insider_pct=insider_pct,
+        has_buybacks=has_buybacks,
+        methodology=methodology,
+        peg=growth_metrics.get('peg_forward') or growth_metrics.get('peg_trailing'),
+        rule_of_40=growth_metrics.get('rule_of_40')
+    )
+
+    # ─── Quality Assessment ──────────────────────────────────
+    non_gaap_flag = non_gaap.get('non_gaap_flag', '')
+    calidad = assess_quality(naranjos_score, non_gaap_flag)
+
+    # ─── Traffic Light (Semáforo) Lógica ─────────────────────
+    estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
+    alerta_compra = 0
+
+    if non_gaap_flag == '🚫 No Elegible':
+        estado_semaforo = '🚫 NO ELEGIBLE'
+        alerta_compra = 0
+    elif methodology == 'value':
+        has_relative_data = multiple_type != 'N/A'
+        if has_relative_data:
+            if ms_abs > 15.0 and ms_rel > 10.0:
+                if '❌' in calidad:
+                    estado_semaforo = '🟡 MANTENER (Baja Calidad)'
+                else:
+                    estado_semaforo = '🟢 STRONG BUY'
+                    alerta_compra = 1
+            elif ms_abs < 0.0 and ms_rel < 0.0:
+                estado_semaforo = '🔴 SOBREVALORADA'
+            else:
+                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
+        else:
+            if ms_abs > 30.0:
+                if '❌' in calidad:
+                    estado_semaforo = '🟡 MANTENER (Baja Calidad)'
+                else:
+                    estado_semaforo = '🟢 STRONG BUY'
+                    alerta_compra = 1
+            elif ms_abs < -15.0:
+                estado_semaforo = '🔴 SOBREVALORADA'
+            else:
+                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
+    elif methodology == 'growth':
+        peg = growth_metrics.get('peg_forward') or growth_metrics.get('peg_trailing')
+        rule40 = growth_metrics.get('rule_of_40')
+        if peg and rule40:
+            if peg < 1.5 and rule40 >= 40:
+                if '❌' in calidad or (mos is not None and mos < -30.0) or (roic_result.get('roic_current', 0) or 0) < 0:
+                    estado_semaforo = '🟡 GROWTH HOLD (Riesgo/Calidad)'
+                else:
+                    estado_semaforo = '🟢 GROWTH BUY'
+                    alerta_compra = 1
+            elif peg > 2.5 or rule40 < 20:
+                estado_semaforo = '🔴 GROWTH OVERPRICED'
+            else:
+                estado_semaforo = '🟡 GROWTH HOLD'
+        else:
+            estado_semaforo = '🟡 SIN DATOS GROWTH'
+    elif methodology == 'speculative':
+        estado_semaforo = '⚠️ ALTO RIESGO'
+        alerta_compra = 0
+    else:  # book_value, dividend
+        has_relative_data = multiple_type != 'N/A'
+        if has_relative_data:
+            if ms_abs > 15.0 and ms_rel > 10.0:
+                if '❌' in calidad:
+                    estado_semaforo = '🟡 MANTENER (Baja Calidad)'
+                else:
+                    estado_semaforo = '🟢 STRONG BUY'
+                    alerta_compra = 1
+            elif ms_abs < 0.0 and ms_rel < 0.0:
+                estado_semaforo = '🔴 SOBREVALORADA'
+            else:
+                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
+        else:
+            if ms_abs > 30.0:
+                if '❌' in calidad:
+                    estado_semaforo = '🟡 MANTENER (Baja Calidad)'
+                else:
+                    estado_semaforo = '🟢 STRONG BUY'
+                    alerta_compra = 1
+            elif ms_abs < -15.0:
+                estado_semaforo = '🔴 SOBREVALORADA'
+            else:
+                estado_semaforo = '🟡 MANTENER / SEGUIMIENTO'
 
     # ─── Sector Benchmarking (I7) ────────────────────────────
     sector_lower = sector.lower() if sector else ''
@@ -1627,12 +1981,6 @@ def run_full_analysis(data: dict) -> dict:
     # ─── Decision Criterion: Compra de Calidad (Caso Ferrari) ─
     if estado_semaforo == '🟡 MANTENER / SEGUIMIENTO':
         if ms_abs > 0.0 and ms_rel > 0.0 and roic_result.get('roic_hist_avg', 0) > 18.0:
-            has_buybacks = False
-            shares_history = data.get('shares_history', [])
-            if len(shares_history) >= 2 and shares_history[0] and shares_history[-1] and shares_history[0] < shares_history[-1]:
-                has_buybacks = True
-            insider_pct = data.get('held_percent_insiders', 0) or 0
-
             if has_buybacks or (insider_pct * 100 > 0.1):
                 estado_semaforo = '🟢 COMPRA DE CALIDAD'
                 alerta_compra = 1
@@ -1649,6 +1997,18 @@ def run_full_analysis(data: dict) -> dict:
     if payout_ratio > 2.0:
         # Payout ratio > 200% is also suspect
         payout_ratio = None
+
+    # ─── Piotroski F-Score (Value Trap Detector) ────────
+    piotroski = calculate_piotroski_score(data)
+
+    # ─── R&D Adjusted Margin (Informative only, does NOT change FCF/ROIC) ──
+    rd_expense_values = data.get('rd_expense_values', [])
+    rd_latest = rd_expense_values[0] if rd_expense_values else 0
+    rd_adjusted_operating_margin = None
+    if current_operating_margin is not None and latest_rev and latest_rev > 0 and rd_latest:
+        # Add back R&D to EBIT to show "true" economic margin if R&D were capitalised
+        rd_ratio = rd_latest / latest_rev
+        rd_adjusted_operating_margin = current_operating_margin + rd_ratio
 
     # ─── Build result ────────────────────────────────────────
     analysis = {
@@ -1731,11 +2091,10 @@ def run_full_analysis(data: dict) -> dict:
         'calidad': calidad,
         'non_gaap_flag': non_gaap_flag,
         'non_gaap_detail': non_gaap.get('non_gaap_detail', ''),
-
-        # Growth
+        'naranjos_score': naranjos_score,
+        'naranjos_details': naranjos_details,
         'growth_rate': growth_rate,
         'growth_rate_pct': growth_rate_pct,
-        'analyst_target': data.get('analyst_target'),
 
         # Growth Investing Metrics
         'peg_trailing': growth_metrics.get('peg_trailing'),
@@ -1763,8 +2122,16 @@ def run_full_analysis(data: dict) -> dict:
         # New: Growth Source (confidence indicator)
         'growth_source': growth_source,
 
-        # Revenue (for frontend display)
+        # Revenue and Historical Data (for frontend display)
         'revenue_values': revenue_values,
+        'net_income_values': net_income_values,
+        'capex_values': data.get('capex_values', []),
+        'fcf_real_values': fcf_result.get('fcf_real_values', []),
+        'fcf_real_ttm': fcf_result.get('fcf_real_ttm'),
+        'fcf_ttm_pre_sbc': fcf_result.get('fcf_ttm_pre_sbc'),
+        'sbc_values': fcf_result.get('sbc_values', []),
+        'shares_history': shares_history,
+        'fiscal_dates': data.get('fiscal_dates', []),
 
         # Business Summary (for thesis)
         'business_summary': data.get('business_summary', ''),
@@ -1775,7 +2142,25 @@ def run_full_analysis(data: dict) -> dict:
 
         # Meta
         'fetched_at': data.get('fetched_at', ''),
-        'error': None
+        'error': None,
+
+        # Piotroski F-Score (Value Trap Detector)
+        'piotroski_score': piotroski.get('piotroski_score'),
+        'piotroski_verdict': piotroski.get('piotroski_verdict'),
+        'piotroski_risk_level': piotroski.get('piotroski_risk_level'),
+        'piotroski_details': piotroski.get('piotroski_details', []),
+
+        # DCF Transparency
+        'terminal_value_pct': terminal_pct,
+
+        # R&D Adjusted Margin (informative)
+        'rd_adjusted_operating_margin': rd_adjusted_operating_margin,
+
+        # Macroeconomic
+        'risk_free_rate_used': risk_free_rate,
+
+        # CAPEX Informative
+        'excess_capex_warning': excess_capex_warning,
     }
 
     return analysis
@@ -1805,6 +2190,7 @@ def generate_investment_thesis(analysis: dict) -> str:
     fcf_ttm = analysis.get('fcf_real_ttm')
     sbc_vals = analysis.get('sbc_values', [])
     fcf_pre_sbc = analysis.get('fcf_ttm_pre_sbc')
+    revenue_vals = analysis.get('revenue_values', [])
     beta = analysis.get('beta')
     summary = analysis.get('business_summary', '')
 
@@ -1832,12 +2218,27 @@ def generate_investment_thesis(analysis: dict) -> str:
     if fcf_ttm:
         fcf_str = f"${fcf_ttm/1e9:.1f}B" if abs(fcf_ttm) >= 1e9 else f"${fcf_ttm/1e6:.0f}M"
         parts.append(f"FCF Real (ajustado por SBC): {fcf_str}, tendencia {fcf_trend}.")
-    if sbc_vals and sbc_vals[0] and fcf_pre_sbc and fcf_pre_sbc > 0:
-        sbc_pct = (sbc_vals[0] / fcf_pre_sbc) * 100
-        if sbc_pct > 30:
-            parts.append(f"⚠️ SBC elevado ({sbc_pct:.0f}% del FCF pre-SBC) — dilución significativa para el accionista.")
-        elif sbc_pct > 15:
-            parts.append(f"SBC representa el {sbc_pct:.0f}% del FCF pre-SBC — nivel moderado de dilución.")
+    if sbc_vals and sbc_vals[0]:
+        sbc_current = sbc_vals[0]
+        sbc_msg = ""
+        if fcf_pre_sbc and fcf_pre_sbc > 0:
+            sbc_pct = (sbc_current / fcf_pre_sbc) * 100
+            if sbc_pct > 30:
+                sbc_msg += f"⚠️ SBC elevado ({sbc_pct:.0f}% del FCF pre-SBC"
+            elif sbc_pct > 15:
+                sbc_msg += f"SBC representa el {sbc_pct:.0f}% del FCF pre-SBC"
+                
+        if revenue_vals and revenue_vals[0] and revenue_vals[0] > 0 and sbc_msg:
+            sbc_rev_pct = (sbc_current / revenue_vals[0]) * 100
+            sbc_msg += f" y {sbc_rev_pct:.1f}% de las ventas)."
+        elif sbc_msg:
+            sbc_msg += ")."
+            
+        if "⚠️" in sbc_msg:
+            sbc_msg += " Dilución significativa."
+            
+        if sbc_msg:
+            parts.append(sbc_msg.strip())
 
     # Valuation
     if mos > 30:

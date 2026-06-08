@@ -3,7 +3,7 @@
  * Caches static assets for offline access.
  */
 
-const CACHE_NAME = 'value-analyst-v7';
+const CACHE_NAME = 'value-analyst-v8';
 const ASSETS = [
   '/',
   '/index.html',

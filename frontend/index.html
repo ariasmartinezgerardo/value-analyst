@@ -13,8 +13,9 @@
   
   <link rel="manifest" href="manifest.json">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍊</text></svg>">
-  <link rel="stylesheet" href="styles.css?v=2">
+  <link rel="stylesheet" href="styles.css?v=3">
   <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+
 </head>
 <body>
   
@@ -65,6 +66,12 @@
         ⚡ EJECUTAR UPDATE
       </button>
 
+      <div class="portfolio-tabs" style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <button id="tab-btn-portfolio" class="detail-tab active" onclick="switchPortfolioTab('portfolio')">💼 En Cartera</button>
+        <button id="tab-btn-watchlist" class="detail-tab" onclick="switchPortfolioTab('watchlist')">👀 En Seguimiento</button>
+        <button id="tab-btn-compare" class="detail-tab" onclick="navigate('compare')">⚖️ Comparador</button>
+      </div>
+
       <div id="portfolio-list">
         <!-- Dynamic content -->
       </div>
@@ -84,6 +91,30 @@
     <div id="page-detail" class="page">
       <div id="detail-content">
         <!-- Dynamic content -->
+      </div>
+    </div>
+
+    <!-- ─── Page: Compare ───────────────────────────────────── -->
+    <div id="page-compare" class="page">
+      <div class="top-nav__logo" style="margin-bottom: 20px; cursor: pointer;" onclick="navigate('dashboard')">
+        <span class="top-nav__logo-icon" style="font-size: 1.2rem;">⬅️</span>
+        <span class="top-nav__logo-text">Volver al Dashboard</span>
+      </div>
+      
+      <h1 class="page__title">⚖️ Comparador</h1>
+      <p class="page__subtitle">Selecciona hasta 3 empresas de tu cartera para compararlas frente a frente</p>
+      
+      <div style="display: flex; gap: 10px; margin-bottom: 20px; align-items: center;">
+        <select id="compare-select" class="modal__input" style="flex: 1; max-width: 300px;">
+          <option value="" disabled selected>Selecciona un ticker...</option>
+          <!-- Options populated dynamically -->
+        </select>
+        <button class="btn-primary" onclick="addCompareTicker()" style="padding: 10px 15px;">Añadir</button>
+        <button class="btn-text" onclick="clearCompare()" style="color: var(--text-tertiary);">Limpiar</button>
+      </div>
+
+      <div id="compare-table-container" style="overflow-x: auto;">
+        <!-- Table populated dynamically -->
       </div>
     </div>
 
@@ -329,10 +360,12 @@
       </div>
 
       <div style="margin-top: var(--space-2xl); text-align: center;">
-        <p style="font-size: 0.72rem; color: var(--text-muted);">
-          Value Analyst v1.0.0<br>
-          Motor de análisis fundamental · Inversión en Valor<br>
-          Datos: Yahoo Finance vía yfinance
+        <p style="font-size: 0.75rem; color: var(--text-tertiary); font-weight: 600;">
+          Value Analyst v1.1.0 <span style="background: var(--bg-elevated); padding: 2px 6px; border-radius: 4px; font-size: 0.65rem; color: var(--accent-primary);">Auditoría Junio 2026</span><br>
+          <span style="font-size: 0.72rem; color: var(--text-muted); font-weight: normal; margin-top: 4px; display: inline-block;">
+            Motor de análisis fundamental · Inversión en Valor<br>
+            Datos: Yahoo Finance vía yfinance
+          </span>
         </p>
       </div>
     </div>
@@ -406,10 +439,14 @@
   <!-- ═══ Add Ticker Modal ═══ -->
   <div id="modal-add" class="modal-overlay">
     <div class="modal">
-      <div class="modal__title">Añadir Empresa a Cartera</div>
+      <div class="modal__title">Añadir Empresa</div>
       <input id="input-ticker" class="modal__input" type="text" 
              placeholder="Introduce el ticker (ej: AAPL, MSFT)" 
-             maxlength="10" autocomplete="off">
+             maxlength="10" autocomplete="off" style="margin-bottom: 15px;">
+      <select id="input-list-type" class="modal__input">
+        <option value="watchlist" selected>👀 En Seguimiento</option>
+        <option value="portfolio">💼 En Cartera</option>
+      </select>
       <div class="modal__actions">
         <button class="btn-secondary" onclick="closeAddModal()">Cancelar</button>
         <button class="btn-primary" onclick="addTicker()">Añadir</button>
@@ -421,7 +458,7 @@
   <div id="sidebar-overlay" class="sidebar-overlay" onclick="closeSidebar()"></div>
   <div id="sidebar" class="sidebar">
     <div class="sidebar__title">
-      Configuración
+      <div>Configuración <span style="font-size: 0.65rem; background: var(--bg-elevated); color: var(--accent-primary); padding: 2px 6px; border-radius: 4px; vertical-align: middle; margin-left: 8px;">v1.1.0</span></div>
       <button class="sidebar__close" onclick="closeSidebar()">✕</button>
     </div>
 
@@ -458,7 +495,7 @@
   <div id="toast" class="toast"></div>
 
   <!-- ═══ Scripts ═══ -->
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=6"></script>
 
   <!-- ═══ Service Worker Registration ═══ -->
   <script>

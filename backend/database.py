@@ -40,6 +40,7 @@ portfolio_table = Table(
     Column('notes', String(1000), server_default=''),
     Column('purchase_price', Float, nullable=True),
     Column('shares', Float, nullable=True),
+    Column('list_type', String(50), server_default='watchlist'),
     UniqueConstraint('user_id', 'ticker', name='uix_user_ticker')
 )
 
@@ -148,7 +149,8 @@ def get_portfolio(user_id: int):
             portfolio_table.c.added_at,
             portfolio_table.c.notes,
             portfolio_table.c.purchase_price,
-            portfolio_table.c.shares
+            portfolio_table.c.shares,
+            portfolio_table.c.list_type
         ).where(portfolio_table.c.user_id == user_id).order_by(portfolio_table.c.added_at.desc())
         
         rows = conn.execute(stmt).mappings().all()
@@ -160,14 +162,15 @@ def get_portfolio(user_id: int):
             results.append(d)
         return results
 
-def add_to_portfolio(user_id: int, ticker: str, notes: str = '') -> bool:
+def add_to_portfolio(user_id: int, ticker: str, notes: str = '', list_type: str = 'watchlist') -> bool:
     from sqlalchemy.exc import IntegrityError
     with engine.begin() as conn:
         try:
             conn.execute(insert(portfolio_table).values(
                 user_id=user_id,
                 ticker=ticker.upper().strip(),
-                notes=notes
+                notes=notes,
+                list_type=list_type
             ))
             return True
         except IntegrityError:
@@ -182,14 +185,16 @@ def remove_from_portfolio(user_id: int, ticker: str) -> bool:
         )
         return res.rowcount > 0
 
-def update_portfolio_position(user_id: int, ticker: str, purchase_price: float = None, shares: float = None) -> bool:
-    """Update purchase price and/or shares for a portfolio position."""
+def update_portfolio_position(user_id: int, ticker: str, purchase_price: float = None, shares: float = None, list_type: str = None) -> bool:
+    """Update purchase price, shares, and/or list_type for a portfolio position."""
     with engine.begin() as conn:
         values = {}
         if purchase_price is not None:
             values['purchase_price'] = purchase_price
         if shares is not None:
             values['shares'] = shares
+        if list_type is not None:
+            values['list_type'] = list_type
         if not values:
             return False
         res = conn.execute(

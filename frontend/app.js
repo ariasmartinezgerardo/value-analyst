@@ -10,12 +10,14 @@ const API_BASE = window.location.origin + '/api';
 // ─── State ──────────────────────────────────────────────────────
 const state = {
   currentPage: 'dashboard',
+  activePortfolioTab: 'portfolio',
   portfolio: [],
   currentDetail: null,
   explorerResults: [],
   isLoading: false,
   isUpdating: false,
   isExploring: false,
+  compareTickers: [],
   token: localStorage.getItem('token') || null,
   role: localStorage.getItem('role') || 'user',
   username: localStorage.getItem('username') || '',
@@ -104,7 +106,7 @@ function getSemaforoEmoji(status) {
 
 function getSemaforoMeaning(status) {
   if (!status) return 'No hay datos de valoración.';
-  if (status.includes('STRONG BUY')) return 'Convergencia total. Empresa barata por fundamentales (DCF/Graham) e históricamente.';
+  if (status.includes('STRONG BUY')) return 'Convergencia total. Empresa barata por fundamentales e históricamente.';
   if (status.includes('GROWTH BUY')) return 'Metodología Growth: PEG < 1.5 (infravalorada para su crecimiento) + Rule of 40 ≥ 40 (calidad tech premium).';
   if (status.includes('COMPRA DE CALIDAD')) return 'Caso Buffett: Empresa de extraordinaria calidad (Wide Moat y excelente directiva) cotizando a un precio razonable.';
   if (status.includes('GROWTH OVERPRICED')) return 'Growth sobrecomprado: PEG > 2.5 o Rule of 40 < 20. El mercado ya descuenta demasiado crecimiento futuro en el precio.';
@@ -231,6 +233,7 @@ function navigate(page, params = {}) {
   if (page === 'explore') { window.updateExploreChips && window.updateExploreChips(); }
   if (page === 'wiki') loadWiki();
   if (page === 'admin') loadAdminPanel();
+  if (page === 'compare') loadComparePage();
 }
 
 function handleHashChange() {
@@ -259,13 +262,21 @@ async function loadPortfolio() {
   }
 }
 
+function switchPortfolioTab(tab) {
+  state.activePortfolioTab = tab;
+  document.getElementById('tab-btn-portfolio').classList.toggle('active', tab === 'portfolio');
+  document.getElementById('tab-btn-watchlist').classList.toggle('active', tab === 'watchlist');
+  renderPortfolio();
+}
+
 function renderPortfolio() {
   const container = document.getElementById('portfolio-list');
+  const filteredPortfolio = state.portfolio.filter(item => item.list_type === state.activePortfolioTab);
   
-  if (state.portfolio.length === 0) {
+  if (filteredPortfolio.length === 0) {
     container.innerHTML = renderEmptyState(
-      '📈', 
-      'Cartera vacía', 
+      '📦', 
+      state.activePortfolioTab === 'portfolio' ? 'Cartera vacía' : 'Seguimiento vacío', 
       'Añade tickers para empezar a analizar empresas con criterios de inversión en valor.'
     );
     const scatterEl = document.getElementById('scatter-container');
@@ -274,7 +285,7 @@ function renderPortfolio() {
   }
 
   let html = '';
-  for (const item of state.portfolio) {
+  for (const item of filteredPortfolio) {
     const mosBadge = getMosBadgeClass(item.margen_seguridad);
     const mosText = item.margen_seguridad !== null ? formatPercent(item.margen_seguridad) : 'Sin datos';
     const archetypeShort = item.archetype_label ? item.archetype_label.split(' ')[0] : '';
@@ -300,7 +311,7 @@ function renderPortfolio() {
 
   // Render scatter plot if 2+ items with data
   const scatterEl = document.getElementById('scatter-container');
-  const itemsWithData = state.portfolio.filter(p => p.roic_current != null && p.margen_seguridad != null);
+  const itemsWithData = state.portfolio.filter(p => p.roic_actual != null && p.margen_seguridad != null);
   if (scatterEl && itemsWithData.length >= 2) {
     scatterEl.style.display = 'block';
     setTimeout(renderScatterPlot, 100);
@@ -345,17 +356,33 @@ function closeAddModal() {
   document.getElementById('input-ticker').value = '';
 }
 
-async function addTicker() {
-  const input = document.getElementById('input-ticker');
-  const ticker = input.value.trim().toUpperCase();
-  if (!ticker) return;
-
+async function moveTickerList(ticker, newListType) {
   try {
-    const data = await apiPost('/portfolio', { ticker });
+    const data = await apiPatch(`/portfolio/${ticker}`, { list_type: newListType });
     if (data.error) {
       showToast(`⚠️ ${data.error}`, 'error');
     } else {
-      showToast(`✅ ${ticker} añadido a la cartera`, 'success');
+      showToast(`✅ ${ticker} movido a ${newListType === 'portfolio' ? 'Cartera' : 'Seguimiento'}`, 'success');
+      loadPortfolio();
+    }
+  } catch (err) {
+    showToast('❌ Error al mover ticker', 'error');
+  }
+}
+
+async function addTicker() {
+  const input = document.getElementById('input-ticker');
+  const typeSelect = document.getElementById('input-list-type');
+  const ticker = input.value.trim().toUpperCase();
+  const list_type = typeSelect ? typeSelect.value : 'watchlist';
+  if (!ticker) return;
+
+  try {
+    const data = await apiPost('/portfolio', { ticker, list_type });
+    if (data.error) {
+      showToast(`⚠️ ${data.error}`, 'error');
+    } else {
+      showToast(`✅ ${ticker} añadido a ${list_type === 'portfolio' ? 'la cartera' : 'seguimiento'}`, 'success');
       closeAddModal();
       loadPortfolio();
     }
@@ -414,6 +441,7 @@ async function loadCompanyDetail(ticker) {
     }
     state.currentDetail = data;
     renderCompanyDetail(data);
+    
   } catch (err) {
     container.innerHTML = renderEmptyState('❌', 'Error de conexión', 'No se pudo cargar los datos de la empresa.');
   }
@@ -433,7 +461,7 @@ function renderCompanyDetail(d) {
   }
 
   // Scorecard signal helpers
-  const roicSignal = d.roic_current > 20 ? '🟢' : d.roic_current > 12 ? '🟡' : '🔴';
+  const roicSignal = d.roic_hist_avg > 20 ? '🟢' : d.roic_hist_avg > 12 ? '🟡' : '🔴';
   const fcfSignal = d.fcf_trend === '↑' ? '🟢' : d.fcf_trend === '→' ? '🟡' : '🔴';
   const mosSignal = d.margen_seguridad > 15 ? '🟢' : d.margen_seguridad > 0 ? '🟡' : '🔴';
   const debtSignal = d.net_debt_ebitda != null ? (d.net_debt_ebitda < 2 ? '🟢' : d.net_debt_ebitda < 4 ? '🟡' : '🔴') : '⚪';
@@ -476,7 +504,7 @@ function renderCompanyDetail(d) {
     <div class="scorecard">
       <div class="scorecard__item">
         <span class="scorecard__label">ROIC</span>
-        <span class="scorecard__value">${d.roic_current != null ? formatPercent(d.roic_current) : '—'}</span>
+        <span class="scorecard__value">${d.roic_hist_avg != null ? formatPercent(d.roic_hist_avg) : '—'}</span>
         <span class="scorecard__signal">${roicSignal}</span>
       </div>
       <div class="scorecard__item">
@@ -542,7 +570,7 @@ function renderCompanyDetail(d) {
           ` : d.methodology !== 'speculative' ? `
           <div class="responsive-metrics-grid">
             <div style="background: rgba(0,0,0,0.2); padding: var(--space-sm) var(--space-md); border-radius: var(--radius-sm); border: 1px solid var(--border-subtle);">
-              <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase;">Fundamentales (DCF)</div>
+              <div style="font-size: 0.68rem; color: var(--text-tertiary); text-transform: uppercase;">Fundamentales (${d.alt_model_name || 'DCF'})</div>
               <div style="font-size: 1.05rem; font-weight: 700; font-family: var(--font-mono); color: ${d.ms_absoluto >= 0 ? 'var(--color-success)' : 'var(--color-danger)'};">
                 ${d.ms_absoluto >= 0 ? 'Descuento: ' + formatPercent(d.ms_absoluto) : 'Sobreprecio: ' + formatPercent(Math.abs(d.ms_absoluto))}
               </div>
@@ -817,6 +845,22 @@ function renderCompanyDetail(d) {
           <span class="valuation-box__quality-label">Calidad</span>
           <span class="valuation-box__quality-value">${d.calidad || '—'}</span>
         </div>
+        ${d.naranjos_score != null ? `
+        <div class="valuation-box__quality" title="${(d.naranjos_details || []).join('&#10;')}">
+          <span class="valuation-box__quality-label">Naranjos Score ℹ️</span>
+          <span class="valuation-box__quality-value" style="color: ${d.naranjos_score >= 80 ? 'var(--color-success)' : d.naranjos_score >= 50 ? '#fbbf24' : 'var(--color-danger)'}; font-weight: 700;">${d.naranjos_score}/100</span>
+        </div>
+        ` : ''}
+        ${d.piotroski_score != null && d.margen_seguridad != null && d.margen_seguridad > 0 ? `
+        <div class="valuation-box__quality" style="margin-top: 4px;" title="${(d.piotroski_details || []).join('&#10;')}">
+          <span class="valuation-box__quality-label">Piotroski F-Score ℹ️</span>
+          <span class="valuation-box__quality-value" style="color: ${d.piotroski_score >= 7 ? 'var(--color-success)' : d.piotroski_score >= 4 ? '#fbbf24' : 'var(--color-danger)'}; font-weight: 700;">${d.piotroski_score}/9</span>
+        </div>
+        ${d.piotroski_score <= 3 && d.estado_semaforo && d.estado_semaforo.includes('STRONG BUY') ? `
+        <div style="font-size: 0.7rem; color: var(--color-danger); text-align: right; margin-top: 2px;">
+          ⚠️ RIESGO VALUE TRAP
+        </div>` : ''}
+        ` : ''}
         ` : `
         ${d.graham_value && d.graham_value > 0 ? `
         <div class="valuation-box__row">
@@ -829,6 +873,16 @@ function renderCompanyDetail(d) {
           <span class="valuation-box__label">${d.archetype_id === 'compounder' ? 'DCF (Multi-Fase)' : 'DCF (10a)'}</span>
           <span class="valuation-box__value">${formatCurrency(d.dcf_value, cur)}</span>
         </div>
+        ${d.terminal_value_pct && d.terminal_value_pct > 60 ? `
+        <div style="font-size: 0.7rem; color: #fbbf24; text-align: right; margin-top: 2px;" title="Una gran parte de la valoración depende de flujos muy lejanos y del valor terminal.">
+          ⚠️ ${d.terminal_value_pct}% del valor es terminal
+        </div>
+        ` : ''}
+        ${d.excess_capex_warning && d.excess_capex_warning > 0 ? `
+        <div style="font-size: 0.7rem; color: var(--color-info); text-align: right; margin-top: 2px;" title="La empresa está invirtiendo en CAPEX muy por encima de su media histórica. Este exceso podría ser inversión para crecimiento futuro, pero no se suma al FCF actual por prudencia.">
+          ℹ️ Inversión extra detectada: ${formatLargeNumber(d.excess_capex_warning)}
+        </div>
+        ` : ''}
         ` : ''}
         ${d.alt_value && d.alt_model_name ? `
         <div class="valuation-box__row">
@@ -849,9 +903,25 @@ function renderCompanyDetail(d) {
           <span class="valuation-box__quality-label">Calidad</span>
           <span class="valuation-box__quality-value">${d.calidad || '—'}</span>
         </div>
+        ${d.naranjos_score != null ? `
+        <div class="valuation-box__quality" title="${(d.naranjos_details || []).join('&#10;')}">
+          <span class="valuation-box__quality-label">Naranjos Score ℹ️</span>
+          <span class="valuation-box__quality-value" style="color: ${d.naranjos_score >= 80 ? 'var(--color-success)' : d.naranjos_score >= 50 ? '#fbbf24' : 'var(--color-danger)'}; font-weight: 700;">${d.naranjos_score}/100</span>
+        </div>
+        ` : ''}
+        ${d.piotroski_score != null && d.margen_seguridad != null && d.margen_seguridad > 0 ? `
+        <div class="valuation-box__quality" style="margin-top: 4px;" title="${(d.piotroski_details || []).join('&#10;')}">
+          <span class="valuation-box__quality-label">Piotroski F-Score ℹ️</span>
+          <span class="valuation-box__quality-value" style="color: ${d.piotroski_score >= 7 ? 'var(--color-success)' : d.piotroski_score >= 4 ? '#fbbf24' : 'var(--color-danger)'}; font-weight: 700;">${d.piotroski_score}/9</span>
+        </div>
+        ${d.piotroski_score <= 3 && d.estado_semaforo && d.estado_semaforo.includes('STRONG BUY') ? `
+        <div style="font-size: 0.7rem; color: var(--color-danger); text-align: right; margin-top: 2px;">
+          ⚠️ RIESGO VALUE TRAP
+        </div>` : ''}
+        ` : ''}
         `}
       </div>
-
+      
       <!-- Reverse DCF — hidden for growth/hypergrowth (DCF not applicable) -->
       ${d.implied_growth != null && d.methodology !== 'growth' ? `
       <div class="card" style="margin-bottom: var(--space-md);">
@@ -950,6 +1020,7 @@ function renderCompanyDetail(d) {
     </div>
   `;
 
+
   // Initialize TradingView Widget
   if (typeof TradingView !== 'undefined') {
     new TradingView.widget({
@@ -1016,7 +1087,7 @@ function renderScatterPlot() {
   const canvasEl = document.getElementById('scatter-canvas');
   if (!canvasEl) return;
   
-  const items = state.portfolio.filter(p => p.roic_current != null && p.margen_seguridad != null);
+  const items = state.portfolio.filter(p => p.roic_actual != null && p.margen_seguridad != null);
   if (items.length < 2) {
     canvasEl.parentElement.style.display = 'none';
     return;
@@ -1037,7 +1108,7 @@ function renderScatterPlot() {
 
   // Data ranges
   const mosValues = items.map(i => i.margen_seguridad);
-  const roicValues = items.map(i => i.roic_current);
+  const roicValues = items.map(i => i.roic_actual);
   const mosMin = Math.min(...mosValues, -20);
   const mosMax = Math.max(...mosValues, 40);
   const roicMin = Math.min(...roicValues, 0);
@@ -2121,3 +2192,115 @@ document.addEventListener('DOMContentLoaded', () => {
   // Initial load
   handleHashChange();
 });
+
+// ─── Compare Page Logic ─────────────────────────────────────────
+
+function loadComparePage() {
+  const select = document.getElementById('compare-select');
+  if (!select) return;
+
+  // Populate select with portfolio tickers
+  let options = '<option value="" disabled selected>Selecciona un ticker...</option>';
+  state.portfolio.forEach(p => {
+    options += `<option value="${p.ticker}">${p.ticker} - ${p.empresa}</option>`;
+  });
+  select.innerHTML = options;
+
+  renderCompareTable();
+}
+
+async function addCompareTicker() {
+  const select = document.getElementById('compare-select');
+  const ticker = select.value;
+  if (!ticker) return;
+
+  if (state.compareTickers.length >= 3) {
+    showToast('Máximo 3 empresas para comparar.', 'warning');
+    return;
+  }
+
+  if (state.compareTickers.some(t => t.ticker === ticker)) {
+    showToast('La empresa ya está en el comparador.', 'warning');
+    return;
+  }
+
+  try {
+    const data = await apiGet(`/company/${ticker}`);
+    state.compareTickers.push(data);
+    renderCompareTable();
+  } catch (err) {
+    showToast('Error al cargar datos del ticker.', 'error');
+  }
+}
+
+function clearCompare() {
+  state.compareTickers = [];
+  renderCompareTable();
+}
+
+function renderCompareTable() {
+  const container = document.getElementById('compare-table-container');
+  if (!container) return;
+
+  if (state.compareTickers.length === 0) {
+    container.innerHTML = renderEmptyState('⚖️', 'Ninguna empresa seleccionada', 'Añade empresas usando el selector de arriba.');
+    return;
+  }
+
+  const t = state.compareTickers;
+  let html = `<table class="wiki-table" style="width: 100%; text-align: left;">
+    <thead>
+      <tr>
+        <th>Métrica</th>`;
+  
+  t.forEach(comp => {
+    html += `<th>${comp.ticker}</th>`;
+  });
+  html += `</tr></thead><tbody>`;
+
+  // Helper function to render a row with highlights
+  const renderRow = (label, key, formatter = null, bestCondition = 'highest') => {
+    let rowHtml = `<tr><td style="font-weight: 700;">${label}</td>`;
+    
+    // Find best value
+    let bestVal = null;
+    if (bestCondition === 'highest') {
+      bestVal = Math.max(...t.map(x => Number(x[key]) || -Infinity));
+    } else if (bestCondition === 'lowest') {
+      bestVal = Math.min(...t.map(x => Number(x[key]) || Infinity));
+    }
+
+    t.forEach(comp => {
+      const val = Number(comp[key]);
+      const isBest = val === bestVal && !isNaN(val) && val !== Infinity && val !== -Infinity;
+      let displayVal = formatter ? formatter(val) : val;
+      if (isNaN(val) || comp[key] == null) displayVal = 'N/A';
+      
+      rowHtml += `<td style="${isBest ? 'color: var(--color-success); font-weight: 700;' : ''}">${displayVal}</td>`;
+    });
+    rowHtml += `</tr>`;
+    return rowHtml;
+  };
+
+  html += renderRow('Margen Operativo', 'current_operating_margin', v => formatPercent(v * 100), 'highest');
+  html += renderRow('M. Operativo (I+D Cap)', 'rd_adjusted_operating_margin', v => formatPercent(v * 100), 'highest');
+  html += renderRow('Naranjos Score', 'naranjos_score', v => v + '/100', 'highest');
+  html += renderRow('Piotroski F-Score', 'piotroski_score', v => v + '/9', 'highest');
+  html += renderRow('Margen Seguridad', 'margen_seguridad', v => formatPercent(v), 'highest');
+  html += renderRow('ROIC Medio', 'roic_hist_avg', v => formatPercent(v), 'highest');
+  html += renderRow('PER Actual', 'per_actual', v => v.toFixed(1) + 'x', 'lowest');
+  html += renderRow('Crecimiento (EPS)', 'growth_rate', v => formatPercent(v * 100), 'highest');
+  html += renderRow('Deuda / EBITDA', 'debt_to_ebitda', v => v.toFixed(2) + 'x', 'lowest');
+
+  // Semáforo
+  html += `<tr><td style="font-weight: 700;">Semáforo</td>`;
+  t.forEach(comp => {
+    let sColor = comp.estado_semaforo === 'Verde' ? 'var(--color-success)' : comp.estado_semaforo === 'Naranja' ? '#fbbf24' : 'var(--color-danger)';
+    html += `<td style="color: ${sColor}; font-weight: 700;">${comp.estado_semaforo || 'N/A'}</td>`;
+  });
+  html += `</tr>`;
+
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+

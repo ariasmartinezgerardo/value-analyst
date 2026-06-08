@@ -51,6 +51,16 @@ def _safe_get_all(df, key, default=None):
     return []
 
 
+def _safe_get_years(df):
+    """Extract years from dataframe columns for chart x-axis."""
+    try:
+        if not df.empty:
+            return [str(c.year) if hasattr(c, 'year') else str(c)[:4] for c in df.columns]
+    except Exception:
+        pass
+    return []
+
+
 def fetch_company_data(ticker_symbol: str) -> dict:
     """
     Fetch comprehensive financial data for a company.
@@ -114,6 +124,7 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             q_cash_flow = pd.DataFrame()
 
         # ─── Basic Info ──────────────────────────────────────────
+        fiscal_dates = _safe_get_years(income_stmt)
         company_name = info.get('longName') or info.get('shortName', ticker_symbol)
         sector = info.get('sector', 'N/A')
         industry = info.get('industry', 'N/A')
@@ -137,33 +148,53 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             logger.debug(f"{ticker_symbol}: Converted price from {currency} "
                          f"(÷{_currency_divisor}) → {current_price:.2f} {_base_currency}")
 
-        # ─── Cross-currency: Market vs Financial ─────────────────
-        # If financialCurrency differs from base_currency, we need a
-        # conversion factor so the engine can compare price vs intrinsic.
-        # Derive it from: price_in_financial_currency = EPS * trailingPE
-        _fx_rate = 1.0  # financial_currency per base_currency
-        if financial_currency and _base_currency and financial_currency != _base_currency:
-            trailing_pe = info.get('trailingPE')
-            trailing_eps = info.get('trailingEps')
-            if trailing_pe and trailing_eps and trailing_pe > 0 and trailing_eps > 0:
-                # price_in_financial_curr = eps * pe
-                implied_price_fin = trailing_eps * trailing_pe
-                if current_price > 0:
-                    _fx_rate = implied_price_fin / current_price
-                    logger.debug(f"{ticker_symbol}: FX rate {_base_currency}→{financial_currency} = {_fx_rate:.4f}")
-            # Apply: convert current_price to financialCurrency for engine
-            current_price = current_price * _fx_rate
+        # ─── USD Currency Forcing via yfinance FX ─────────────────
+        # Convert everything to USD explicitly
+        _fx_rate_price = 1.0
+        _fx_rate_fin = 1.0
+
+        if _base_currency and _base_currency != 'USD':
+            try:
+                fx = yf.Ticker(f"{_base_currency}USD=X")
+                rate = fx.info.get('regularMarketPrice') or fx.info.get('previousClose')
+                if rate:
+                    _fx_rate_price = rate
+                    logger.debug(f"{ticker_symbol}: FX rate {_base_currency}→USD = {_fx_rate_price:.4f}")
+            except Exception as e:
+                logger.warning(f"{ticker_symbol}: Failed to fetch FX rate for {_base_currency}USD=X: {e}")
+
+        if financial_currency and financial_currency != 'USD':
+            try:
+                if financial_currency == _base_currency:
+                    _fx_rate_fin = _fx_rate_price
+                else:
+                    fx = yf.Ticker(f"{financial_currency}USD=X")
+                    rate = fx.info.get('regularMarketPrice') or fx.info.get('previousClose')
+                    if rate:
+                        _fx_rate_fin = rate
+                        logger.debug(f"{ticker_symbol}: FX rate {financial_currency}→USD = {_fx_rate_fin:.4f}")
+            except Exception as e:
+                logger.warning(f"{ticker_symbol}: Failed to fetch FX rate for {financial_currency}USD=X: {e}")
+
+        if current_price and current_price > 0:
+            current_price = current_price * _fx_rate_price
+            
+        def _apply_fx(vals):
+            if not vals: return vals
+            return [v * _fx_rate_fin if v is not None else None for v in vals]
 
         # New fields for archetype valuation models
         book_value = info.get('bookValue', 0)  # Book value per share (already in financialCurrency)
         roe = info.get('returnOnEquity', 0)  # Return on equity
         dividend_rate = info.get('dividendRate', 0)  # Annual dividend per share
 
-        # Convert dividend_rate from sub-unit if needed, then to financial currency
+        # Convert dividend_rate from sub-unit if needed, then to USD
         if _currency_divisor > 1 and dividend_rate:
             dividend_rate = dividend_rate / _currency_divisor
-        if _fx_rate != 1.0 and dividend_rate:
-            dividend_rate = dividend_rate * _fx_rate
+        if _fx_rate_price != 1.0 and dividend_rate:
+            dividend_rate = dividend_rate * _fx_rate_price
+        if _fx_rate_fin != 1.0 and book_value:
+            book_value = book_value * _fx_rate_fin
 
         # ─── EPS ─────────────────────────────────────────────────
         # Historical EPS from income statement
@@ -356,11 +387,11 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         # ─── Analyst Growth Estimate ─────────────────────────────
         growth_estimate = info.get('earningsGrowth') or info.get('revenueGrowth')
         analyst_target = info.get('targetMeanPrice')
-        # Analyst target is in market currency, convert to financial currency
+        # Analyst target is in market currency, convert to USD
         if analyst_target and _currency_divisor > 1:
             analyst_target = analyst_target / _currency_divisor
-        if analyst_target and _fx_rate != 1.0:
-            analyst_target = analyst_target * _fx_rate
+        if analyst_target and _fx_rate_price != 1.0:
+            analyst_target = analyst_target * _fx_rate_price
 
         # ─── Trailing PER ────────────────────────────────────────
         per_trailing = info.get('trailingPE')
@@ -402,6 +433,72 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             shares_history = _safe_get_all(balance_sheet, key)
             if shares_history:
                 break
+
+        # ─── R&D Expense (for adjusted margin display) ───────────
+        rd_expense_values = []
+        rd_keys = ['Research And Development', 'ResearchAndDevelopment',
+                   'Research Development', 'Research And Development Expenses']
+        for key in rd_keys:
+            rd_expense_values = _safe_get_all(income_stmt, key)
+            if rd_expense_values:
+                break
+        rd_expense_values = [abs(v) if v else 0 for v in rd_expense_values]
+        rd_expense_values = _apply_fx(rd_expense_values)
+
+        # ─── Operating Cash Flow (for Piotroski) ─────────────────
+        operating_cashflow_values = []
+        ocf_keys = ['Operating Cash Flow', 'OperatingCashFlow', 'Cash From Operations',
+                    'Net Cash Provided By Operating Activities']
+        for key in ocf_keys:
+            operating_cashflow_values = _safe_get_all(cash_flow, key)
+            if operating_cashflow_values:
+                break
+        operating_cashflow_values = _apply_fx(operating_cashflow_values)
+
+        # ─── Current Ratio components (for Piotroski) ────────────
+        current_assets_values = []
+        for key in ['Current Assets', 'CurrentAssets', 'Total Current Assets']:
+            current_assets_values = _safe_get_all(balance_sheet, key)
+            if current_assets_values:
+                break
+        current_assets_values = _apply_fx(current_assets_values)
+
+        current_liabilities_values = []
+        for key in ['Current Liabilities', 'CurrentLiabilities', 'Total Current Liabilities']:
+            current_liabilities_values = _safe_get_all(balance_sheet, key)
+            if current_liabilities_values:
+                break
+        current_liabilities_values = _apply_fx(current_liabilities_values)
+
+        long_term_debt_values = []
+        for key in ['Long Term Debt', 'LongTermDebt', 'Long Term Debt And Capital Lease Obligation']:
+            long_term_debt_values = _safe_get_all(balance_sheet, key)
+            if long_term_debt_values:
+                break
+        long_term_debt_values = _apply_fx(long_term_debt_values)
+
+        total_assets_values = []
+        for key in ['Total Assets', 'TotalAssets']:
+            total_assets_values = _safe_get_all(balance_sheet, key)
+            if total_assets_values:
+                break
+        total_assets_values = _apply_fx(total_assets_values)
+
+        # ─── US 10-Year Treasury Yield (Risk-Free Rate) ───────────
+        # Used by get_wacc() for live CAPM calculation
+        risk_free_rate = 0.04  # Safe fallback: 4.0%
+        try:
+            tnx = yf.Ticker('^TNX')
+            tnx_info = tnx.info or {}
+            tnx_price = tnx_info.get('regularMarketPrice') or tnx_info.get('previousClose')
+            if tnx_price and 0.5 < tnx_price < 15.0:
+                # ^TNX quotes in percentage points (e.g. 4.35 means 4.35%)
+                risk_free_rate = tnx_price / 100.0
+                logger.info(f"Live risk-free rate (^TNX): {tnx_price:.2f}% → {risk_free_rate:.4f}")
+            else:
+                logger.warning(f"^TNX value {tnx_price} out of sane range, using fallback 4.0%")
+        except Exception as e:
+            logger.warning(f"Failed to fetch ^TNX risk-free rate: {e}. Using 4.0% fallback.")
 
         # ─── Quarterly Earnings History (last 4 quarters) ────────
         quarterly_data = []
@@ -490,13 +587,49 @@ def fetch_company_data(ticker_symbol: str) -> dict:
 
 
         # ─── Build result ────────────────────────────────────────
+        # --- Apply USD FX to all financial arrays ---
+        eps_values = _apply_fx(eps_values)
+        ebitda_values = _apply_fx(ebitda_values)
+        capex_values = _apply_fx(capex_values)
+        interest_values = _apply_fx(interest_values)
+        tax_values = _apply_fx(tax_values)
+        wc_values = _apply_fx(wc_values)
+        da_values = _apply_fx(da_values)
+        ebit_values = _apply_fx(ebit_values)
+        pretax_values = _apply_fx(pretax_values)
+        equity_values = _apply_fx(equity_values)
+        total_debt_values = _apply_fx(total_debt_values)
+        cash_values = _apply_fx(cash_values)
+        fcf_yahoo_values = _apply_fx(fcf_yahoo_values)
+        revenue_values = _apply_fx(revenue_values)
+        gross_profit_values = _apply_fx(gross_profit_values)
+        net_income_values = _apply_fx(net_income_values)
+        sbc_values = _apply_fx(sbc_values)
+        
+        if eps_ttm is not None: eps_ttm *= _fx_rate_fin
+        if ebitda_ttm is not None: ebitda_ttm *= _fx_rate_fin
+        if enterprise_value is not None: enterprise_value *= _fx_rate_price
+        if market_cap is not None: market_cap *= _fx_rate_price
+
+        for q in quarterly_data:
+            if q.get('revenue') is not None: q['revenue'] *= _fx_rate_fin
+            if q.get('operating_income') is not None: q['operating_income'] *= _fx_rate_fin
+            if q.get('net_income') is not None: q['net_income'] *= _fx_rate_fin
+            if q.get('eps') is not None: q['eps'] *= _fx_rate_fin
+            
+        if next_earnings:
+            if next_earnings.get('eps_estimate') is not None: next_earnings['eps_estimate'] *= _fx_rate_fin
+            if next_earnings.get('eps_low') is not None: next_earnings['eps_low'] *= _fx_rate_fin
+            if next_earnings.get('eps_high') is not None: next_earnings['eps_high'] *= _fx_rate_fin
+            if next_earnings.get('revenue_estimate') is not None: next_earnings['revenue_estimate'] *= _fx_rate_fin
+
         result = {
             'ticker': ticker_symbol.upper().strip(),
             'empresa': company_name,
             'sector': sector,
             'industry': industry,
-            'currency': currency,
-            'financial_currency': financial_currency,
+            'currency': 'USD',
+            'financial_currency': 'USD',
             'market_cap': market_cap,
             'shares_outstanding': shares_outstanding,
             'current_price': current_price,
@@ -556,6 +689,17 @@ def fetch_company_data(ticker_symbol: str) -> dict:
             # Quarterly Earnings & Calendar
             'quarterly_data': quarterly_data,
             'next_earnings': next_earnings,
+
+            # R&D and extra balance sheet data (for Piotroski + I&D adjusted margin)
+            'rd_expense_values': rd_expense_values,
+            'operating_cashflow_values': operating_cashflow_values,
+            'current_assets_values': current_assets_values,
+            'current_liabilities_values': current_liabilities_values,
+            'long_term_debt_values': long_term_debt_values,
+            'total_assets_values': total_assets_values,
+
+            # Live macroeconomic inputs
+            'risk_free_rate': risk_free_rate,
 
             'fetched_at': datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'),
             'error': None
