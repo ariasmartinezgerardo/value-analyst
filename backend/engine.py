@@ -565,8 +565,11 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
         return 'compounder', '🚀 Compounder'
 
     # 6. HYPERGROWTH — only for profitable companies with low ROIC but explosive growth
-    #    These are companies growing fast but haven't yet built a durable moat
-    if growth_rate and growth_rate > 0.25 and rev_growth and rev_growth > 0.20:
+    #    These are companies growing fast but haven't yet built a durable moat.
+    #    SPECIAL CASE: Software companies (SaaS) growing revenue > 15% are always hypergrowth.
+    if 'software' in industry and rev_growth and rev_growth >= 0.15:
+        return 'hypergrowth', '🔥 Hipercrecimiento (SaaS)'
+    elif growth_rate and growth_rate > 0.20 and rev_growth and rev_growth > 0.15:
         return 'hypergrowth', '🔥 Hipercrecimiento'
 
     # 7. TURNAROUND GROWTH — recently profitable companies with explosive revenue
@@ -584,7 +587,7 @@ def detect_archetype(data: dict, roic_avg, growth_rate, eps_ttm, fcf_ttm) -> tup
             if len(clean_rev) >= 2 and clean_rev[1] > 0:
                 rev_yoy = (clean_rev[0] / clean_rev[1]) - 1  # 1-year YoY growth
             best_rev_growth = max(rev_growth or 0, rev_yoy or 0)
-            if best_rev_growth > 0.20:
+            if best_rev_growth > 0.15:
                 return 'hypergrowth', '🔥 Turnaround Growth'
 
     # 8. Classic Value (everything else with positive earnings)
