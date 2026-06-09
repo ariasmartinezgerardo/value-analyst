@@ -1,15 +1,15 @@
 {
-  "name": "Value Analyst",
-  "short_name": "ValueAnalyst",
+  "name": "Naranjos Investment — Value Analyst",
+  "short_name": "Naranjos",
   "description": "Analista fundamental de bolsa — Inversión en Valor. FCF Real, ROIC, Graham, DCF.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0a0e17",
-  "theme_color": "#0a0e17",
+  "background_color": "#121212",
+  "theme_color": "#121212",
   "orientation": "portrait",
   "icons": [
     {
-      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>",
+      "src": "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍊</text></svg>",
       "sizes": "any",
       "type": "image/svg+xml"
     }

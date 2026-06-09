@@ -162,6 +162,16 @@ async function apiDelete(path) {
   return res.json();
 }
 
+async function apiPatch(path, body = {}) {
+  const res = await fetch(API_BASE + path, {
+    method: 'PATCH',
+    headers: getHeaders(),
+    body: JSON.stringify(body),
+  });
+  handleApiError(res);
+  return res.json();
+}
+
 // ─── Toast Notifications ────────────────────────────────────────
 
 function showToast(message, type = 'info') {
@@ -2036,7 +2046,8 @@ function renderWiki(data) {
       'mercado': '💰 Dividendos y Métricas de Mercado',
       'valuation': '🧮 Modelos y Metodologías de Valoración',
       'qualitative': '🔍 Auditoría Cualitativa & Foso',
-      'strategy': '🚦 Lógica de Inversión y Estrategias'
+      'strategy': '🚦 Lógica de Inversión y Estrategias',
+      'growth': '🚀 Métricas Growth & GARP'
     };
     
     for (const [catId, catTitle] of Object.entries(categoriesMap)) {
@@ -2248,7 +2259,7 @@ function renderCompareTable() {
   }
 
   const t = state.compareTickers;
-  let html = `<table class="wiki-table" style="width: 100%; text-align: left;">
+  let html = `<table class="metrics-table" style="width: 100%; text-align: left;">
     <thead>
       <tr>
         <th>Métrica</th>`;
@@ -2290,13 +2301,12 @@ function renderCompareTable() {
   html += renderRow('ROIC Medio', 'roic_hist_avg', v => formatPercent(v), 'highest');
   html += renderRow('PER Actual', 'per_actual', v => v.toFixed(1) + 'x', 'lowest');
   html += renderRow('Crecimiento (EPS)', 'growth_rate', v => formatPercent(v * 100), 'highest');
-  html += renderRow('Deuda / EBITDA', 'debt_to_ebitda', v => v.toFixed(2) + 'x', 'lowest');
+  html += renderRow('Deuda / EBITDA', 'net_debt_ebitda', v => v.toFixed(2) + 'x', 'lowest');
 
   // Semáforo
   html += `<tr><td style="font-weight: 700;">Semáforo</td>`;
   t.forEach(comp => {
-    let sColor = comp.estado_semaforo === 'Verde' ? 'var(--color-success)' : comp.estado_semaforo === 'Naranja' ? '#fbbf24' : 'var(--color-danger)';
-    html += `<td style="color: ${sColor}; font-weight: 700;">${comp.estado_semaforo || 'N/A'}</td>`;
+    html += `<td style="font-weight: 700;">${getSemaforoEmoji(comp.estado_semaforo)} ${comp.estado_semaforo || 'N/A'}</td>`;
   });
   html += `</tr>`;
 

@@ -1,9 +1,10 @@
 /**
  * Service Worker for Value Analyst PWA.
  * Caches static assets for offline access.
+ * Cache version is tied to app version to ensure updates propagate.
  */
 
-const CACHE_NAME = 'value-analyst-v8';
+const CACHE_NAME = 'value-analyst-v1.2.0';
 const ASSETS = [
   '/',
   '/index.html',

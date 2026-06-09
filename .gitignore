@@ -30,6 +30,12 @@ ENV/
 *.sqlite3
 backend/data/
 
+# Debug & Scratch files
+debug_*
+scratch/
+out*.txt
+*.ics
+
 # Environments
 .env
 .env.local
