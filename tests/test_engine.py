@@ -74,9 +74,9 @@ class TestGrowthRate(unittest.TestCase):
         self.assertAlmostEqual(result, 0.10, places=2)
 
     def test_clamp_high_growth(self):
-        # Growth > 25% should be clamped
+        # Growth > 100% should be clamped to 1.0 in the raw calculation
         result = _growth_rate([1000, 100])
-        self.assertEqual(result, 0.25)
+        self.assertEqual(result, 1.0)
 
     def test_clamp_negative_growth(self):
         # Decline > -10% should be clamped
@@ -85,7 +85,7 @@ class TestGrowthRate(unittest.TestCase):
 
     def test_insufficient_data(self):
         result = _growth_rate([100])
-        self.assertEqual(result, 0.05)
+        self.assertIsNone(result)
 
 
 class TestGrahamValuation(unittest.TestCase):
@@ -117,28 +117,28 @@ class TestDCFValuation(unittest.TestCase):
     """Test standard DCF valuation."""
 
     def test_basic_dcf(self):
-        result = dcf_valuation(
+        result, _ = dcf_valuation(
             fcf_current=1e9, growth_rate=0.10,
             shares=1e9, total_debt=5e9, cash=10e9, wacc=0.10
         )
         self.assertGreater(result, 0)
 
     def test_negative_fcf(self):
-        result = dcf_valuation(fcf_current=-1e9, growth_rate=0.10, shares=1e9)
+        result, _ = dcf_valuation(fcf_current=-1e9, growth_rate=0.10, shares=1e9)
         self.assertEqual(result, 0)
 
     def test_zero_shares(self):
-        result = dcf_valuation(fcf_current=1e9, growth_rate=0.10, shares=0)
+        result, _ = dcf_valuation(fcf_current=1e9, growth_rate=0.10, shares=0)
         self.assertEqual(result, 0)
 
     def test_higher_growth_gives_higher_value(self):
-        low_growth = dcf_valuation(fcf_current=1e9, growth_rate=0.05, shares=1e9)
-        high_growth = dcf_valuation(fcf_current=1e9, growth_rate=0.15, shares=1e9)
+        low_growth, _ = dcf_valuation(fcf_current=1e9, growth_rate=0.05, shares=1e9)
+        high_growth, _ = dcf_valuation(fcf_current=1e9, growth_rate=0.15, shares=1e9)
         self.assertGreater(high_growth, low_growth)
 
     def test_higher_wacc_gives_lower_value(self):
-        low_wacc = dcf_valuation(fcf_current=1e9, growth_rate=0.10, shares=1e9, wacc=0.08)
-        high_wacc = dcf_valuation(fcf_current=1e9, growth_rate=0.10, shares=1e9, wacc=0.12)
+        low_wacc, _ = dcf_valuation(fcf_current=1e9, growth_rate=0.10, shares=1e9, wacc=0.08)
+        high_wacc, _ = dcf_valuation(fcf_current=1e9, growth_rate=0.10, shares=1e9, wacc=0.12)
         self.assertGreater(low_wacc, high_wacc)
 
 
@@ -146,7 +146,7 @@ class TestMultiphaseDCF(unittest.TestCase):
     """Test Multi-Phase DCF for Compounder archetype."""
 
     def test_basic_multiphase(self):
-        result = multiphase_dcf_valuation(
+        result, _ = multiphase_dcf_valuation(
             fcf_current=1e9, high_growth=0.20,
             shares=1e9, wacc=0.10
         )
@@ -154,10 +154,10 @@ class TestMultiphaseDCF(unittest.TestCase):
 
     def test_higher_than_standard_dcf_at_same_growth(self):
         """Multi-phase with high growth should exceed standard DCF at same growth."""
-        standard = dcf_valuation(
+        standard, _ = dcf_valuation(
             fcf_current=1e9, growth_rate=0.15, shares=1e9, wacc=0.10
         )
-        multiphase = multiphase_dcf_valuation(
+        multiphase, _ = multiphase_dcf_valuation(
             fcf_current=1e9, high_growth=0.15,
             shares=1e9, wacc=0.10
         )
@@ -166,7 +166,7 @@ class TestMultiphaseDCF(unittest.TestCase):
         self.assertGreater(multiphase, 0)
 
     def test_negative_fcf_returns_zero(self):
-        result = multiphase_dcf_valuation(
+        result, _ = multiphase_dcf_valuation(
             fcf_current=-500e6, high_growth=0.20, shares=1e9
         )
         self.assertEqual(result, 0)
@@ -428,8 +428,8 @@ class TestRunFullAnalysis(unittest.TestCase):
         base = {
             'ticker': 'TEST',
             'empresa': 'Test Corp',
-            'sector': 'Technology',
-            'industry': 'Software—Application',
+            'sector': 'Industrials',
+            'industry': 'Building Products',
             'currency': 'USD',
             'financial_currency': 'USD',
             'current_price': 100.0,
