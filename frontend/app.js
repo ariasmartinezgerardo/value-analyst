@@ -490,7 +490,7 @@ function renderCompanyDetail(d) {
   container.innerHTML = `
     <!-- Header -->
     <div class="detail-header">
-      <button class="detail-header__back" onclick="navigate('dashboard')">←</button>
+      <button class="detail-header__back" onclick="history.back()">←</button>
       <div class="detail-header__info">
         <div class="detail-header__ticker">${d.ticker}</div>
         <div class="detail-header__company">${d.empresa}</div>
@@ -1197,38 +1197,28 @@ function renderScatterPlot() {
 
 // ─── Explorer Profiles ───────────────────────────────────────────
 const exploreProfiles = {
-  conservative: { max_per: 15, min_roic: 15, min_fcf_yield: 7, min_mos: 30 },
-  moderate: { max_per: 20, min_roic: 12, min_fcf_yield: 5, min_mos: 20 },
-  aggressive: { max_per: 25, min_roic: 8, min_fcf_yield: 3, min_mos: 10 },
+  conservative: { min_score: 70 },
+  moderate: { min_score: 40 },
+  aggressive: { min_score: 20 },
 };
 
-// Apply a profile preset to the sliders
+// Apply a profile preset to the score slider
 window.applyExploreProfile = function() {
   const select = document.getElementById('explore-profile');
   if (!select) return;
   const key = select.value;
-  if (key === 'custom') return; // Don't change sliders for custom
+  if (key === 'custom') return;
   const p = exploreProfiles[key];
   if (!p) return;
 
-  document.getElementById('slider-per').value = p.max_per;
-  document.getElementById('slider-roic').value = p.min_roic;
-  document.getElementById('slider-fcf').value = p.min_fcf_yield;
-  document.getElementById('slider-mos').value = p.min_mos;
+  document.getElementById('slider-score').value = p.min_score;
   onSliderChange();
 };
 
-// Update value labels when sliders change
+// Update value label when score slider changes
 window.onSliderChange = function() {
-  const perVal = document.getElementById('slider-per').value;
-  const roicVal = document.getElementById('slider-roic').value;
-  const fcfVal = document.getElementById('slider-fcf').value;
-  const mosVal = document.getElementById('slider-mos').value;
-
-  document.getElementById('slider-per-value').textContent = perVal + 'x';
-  document.getElementById('slider-roic-value').textContent = roicVal + '%';
-  document.getElementById('slider-fcf-value').textContent = fcfVal + '%';
-  document.getElementById('slider-mos-value').textContent = mosVal + '%';
+  const scoreVal = document.getElementById('slider-score').value;
+  document.getElementById('slider-score-value').textContent = scoreVal + ' pts';
 
   // Switch profile to "Custom" when user manually adjusts
   const profileSelect = document.getElementById('explore-profile');
@@ -1236,18 +1226,12 @@ window.onSliderChange = function() {
     const currentProfile = profileSelect.value;
     if (currentProfile !== 'custom') {
       const p = exploreProfiles[currentProfile];
-      if (p && (
-        parseInt(perVal) !== p.max_per ||
-        parseInt(roicVal) !== p.min_roic ||
-        parseInt(fcfVal) !== p.min_fcf_yield ||
-        parseInt(mosVal) !== p.min_mos
-      )) {
+      if (p && parseInt(scoreVal) !== p.min_score) {
         profileSelect.value = 'custom';
       }
     }
   }
 
-  // Update filter chips
   updateExploreChips();
 };
 
@@ -1255,10 +1239,7 @@ window.updateExploreChips = function() {
   const container = document.getElementById('explorer-filters-container');
   if (!container) return;
 
-  const perVal = document.getElementById('slider-per')?.value || 20;
-  const roicVal = document.getElementById('slider-roic')?.value || 12;
-  const fcfVal = document.getElementById('slider-fcf')?.value || 5;
-  const mosVal = document.getElementById('slider-mos')?.value || 20;
+  const scoreVal = document.getElementById('slider-score')?.value || 40;
 
   const archSelect = document.getElementById('explore-archetype');
   const sectorSelect = document.getElementById('explore-sector');
@@ -1267,12 +1248,7 @@ window.updateExploreChips = function() {
   const sectorLabel = sectorSelect && sectorSelect.value !== 'all'
     ? sectorSelect.options[sectorSelect.selectedIndex].text : null;
 
-  let chips = `
-    <span class="filter-chip">PER &lt; ${perVal}x</span>
-    <span class="filter-chip">ROIC &gt; ${roicVal}%</span>
-    <span class="filter-chip">FCF Yield &gt; ${fcfVal}%</span>
-    <span class="filter-chip">MoS &gt; ${mosVal}%</span>
-  `;
+  let chips = `<span class="filter-chip">Score &ge; ${scoreVal} pts</span>`;
   if (archLabel) chips += `<span class="filter-chip filter-chip--accent">${archLabel}</span>`;
   if (sectorLabel) chips += `<span class="filter-chip filter-chip--accent">${sectorLabel}</span>`;
   container.innerHTML = chips;
@@ -1287,11 +1263,8 @@ async function exploreOpportunities() {
   const marketSelect = document.getElementById('explore-market');
   let marketName = marketSelect ? marketSelect.options[marketSelect.selectedIndex].text : 'del mercado';
   
-  // Read slider values
-  const maxPer = document.getElementById('slider-per')?.value || 20;
-  const minRoic = document.getElementById('slider-roic')?.value || 12;
-  const minFcf = document.getElementById('slider-fcf')?.value || 5;
-  const minMos = document.getElementById('slider-mos')?.value || 20;
+  // Read score slider
+  const minScore = document.getElementById('slider-score')?.value || 40;
 
   // Read archetype/sector
   const archetype = document.getElementById('explore-archetype')?.value || 'all';
@@ -1301,12 +1274,10 @@ async function exploreOpportunities() {
   // Determine if sector is a curated list (sector_*) or a Yahoo filter
   let sectorFilter = 'all';
   if (sectorRaw.startsWith('sector_')) {
-    // Curated list: override market with the themed list
     market = sectorRaw;
     const sectorName = sectorSelect ? sectorSelect.options[sectorSelect.selectedIndex].text : sectorRaw;
     marketName = sectorName;
   } else if (sectorRaw !== 'all') {
-    // Yahoo sector filter: filter within the selected market
     sectorFilter = sectorRaw;
   }
 
@@ -1316,32 +1287,36 @@ async function exploreOpportunities() {
   
   state.isExploring = true;
   btn.classList.add('btn-explore--loading');
-  btn.innerHTML = '<span class="spinner"></span> Escaneando mercado...';
+  btn.innerHTML = '<span class="spinner"></span> Escaneando y puntuando...';
   if (sortBar) sortBar.style.display = 'none';
   
   resultsContainer.innerHTML = `
     <div class="progress-bar"><div class="progress-bar__fill" style="width: 60%"></div></div>
     <p style="text-align: center; color: var(--text-tertiary); font-size: 0.85rem;">
-      Analizando empresas de <strong>${marketName}</strong>...<br>
+      Analizando y puntuando empresas de <strong>${marketName}</strong>...<br>
       <span style="font-size: 0.75rem;">Esto puede tardar 1-2 minutos</span>
     </p>
   `;
 
   try {
-    let queryStr = `?market=${encodeURIComponent(market)}&max_per=${maxPer}&min_roic=${minRoic}&min_fcf_yield=${minFcf}&min_mos=${minMos}`;
+    let queryStr = `?market=${encodeURIComponent(market)}&min_score=${minScore}`;
     if (archetype !== 'all') queryStr += `&archetype=${archetype}`;
     if (sectorFilter !== 'all') queryStr += `&sector=${encodeURIComponent(sectorFilter)}`;
-    queryStr += `&sort_by=mos`; // Initial sort
+    queryStr += `&sort_by=score`;
 
     const data = await apiGet('/explore' + queryStr);
     state.explorerResults = data.opportunities || [];
+    state.explorerStats = {
+      total_scanned: data.total_scanned || 0,
+      total_passed: data.total_passed || 0,
+    };
     
     // Show sort bar if results
     if (sortBar && state.explorerResults.length > 0) {
-      sortBar.style.display = 'flex';
+      sortBar.style.display = 'flex';
       // Reset active sort tab
       sortBar.querySelectorAll('.explorer-sort__btn').forEach(b => b.classList.remove('active'));
-      sortBar.querySelector('[data-sort="mos"]')?.classList.add('active');
+      sortBar.querySelector('[data-sort="score"]')?.classList.add('active');
     }
     
     renderExplorerResults();
@@ -1363,21 +1338,57 @@ window.sortExplorerResults = function(sortKey, btnEl) {
   if (btnEl) btnEl.classList.add('active');
 
   const sortFns = {
+    score: (a, b) => (b.score || 0) - (a.score || 0),
     mos: (a, b) => (b.margen_seguridad || 0) - (a.margen_seguridad || 0),
     roic: (a, b) => (b.roic_current || 0) - (a.roic_current || 0),
-    fcf_yield: (a, b) => (b.fcf_yield || 0) - (a.fcf_yield || 0),
-    per: (a, b) => ((a.per_actual || 999) - (b.per_actual || 999)), // Lower PER first
+    per: (a, b) => ((a.per_actual || 999) - (b.per_actual || 999)),
   };
 
-  state.explorerResults.sort(sortFns[sortKey] || sortFns.mos);
+  state.explorerResults.sort(sortFns[sortKey] || sortFns.score);
   renderExplorerResults();
 };
 
+function getGradeColor(grade) {
+  const colors = { A: '#22c55e', B: '#84cc16', C: '#fbbf24', D: '#f97316', F: '#ef4444' };
+  return colors[grade] || '#64748b';
+}
+
+function renderScoreBreakdown(breakdown) {
+  if (!breakdown) return '';
+  const labels = {
+    semaforo: '🚦 Semáforo',
+    calidad: '🛡️ Piotroski',
+    mos: '💰 MoS',
+    roic: '💪 ROIC',
+    fcf_trend: '📈 FCF',
+    transparencia: '✅ GAAP',
+    fiabilidad: '📊 Datos',
+  };
+  const maxPts = { semaforo: 30, calidad: 20, mos: 20, roic: 15, fcf_trend: 10, transparencia: 5, fiabilidad: 5 };
+  return Object.entries(breakdown).map(([key, val]) => {
+    const label = labels[key] || key;
+    const max = maxPts[key] || 0;
+    const pct = max > 0 ? (val / max) * 100 : 0;
+    const color = pct >= 75 ? 'var(--color-success)' : pct >= 40 ? 'var(--color-warning)' : 'var(--color-danger)';
+    return `<div style="display: flex; align-items: center; gap: 6px; font-size: 0.7rem;">
+      <span style="width: 80px; color: var(--text-tertiary);">${label}</span>
+      <div style="flex: 1; height: 4px; background: var(--bg-elevated); border-radius: 2px; overflow: hidden;">
+        <div style="height: 100%; width: ${pct}%; background: ${color}; border-radius: 2px;"></div>
+      </div>
+      <span style="font-family: var(--font-mono); width: 32px; text-align: right; color: var(--text-secondary);">${val}/${max}</span>
+    </div>`;
+  }).join('');
+}
+
 function renderExplorerResults() {
   const container = document.getElementById('explorer-results');
-  
+  const stats = state.explorerStats || {};
+  const statsLine = stats.total_scanned
+    ? `<div style="font-size: 0.78rem; color: var(--text-tertiary); margin-bottom: var(--space-sm);">📊 Analizadas: <strong>${stats.total_scanned}</strong> empresas · Pasaron filtros: <strong>${stats.total_passed}</strong></div>`
+    : '';
+
   if (state.explorerResults.length === 0) {
-    container.innerHTML = renderEmptyState(
+    container.innerHTML = statsLine + renderEmptyState(
       '🔍',
       'Sin resultados',
       'No se encontraron empresas que cumplan todos los criterios. Prueba a relajar los filtros (bajar ROIC, subir PER máximo, o bajar MoS).'
@@ -1386,6 +1397,7 @@ function renderExplorerResults() {
   }
 
   let html = `
+    ${statsLine}
     <div class="explorer-results__title">
       Oportunidades encontradas
       <span class="explorer-results__count">${state.explorerResults.length}</span>
@@ -1395,20 +1407,30 @@ function renderExplorerResults() {
   for (const opp of state.explorerResults) {
     const mosColor = getMosColor(opp.margen_seguridad);
     const archBadge = opp.archetype_label ? `<span class="archetype-badge">${opp.archetype_label}</span>` : '';
+    const gradeColor = getGradeColor(opp.grade);
+    const scorePct = opp.max_score ? Math.round((opp.score / opp.max_score) * 100) : 0;
     html += `
-      <div class="card opportunity-card">
+      <div class="card opportunity-card" style="cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;" 
+           onclick="navigate('detail', {ticker: '${opp.ticker}'})" 
+           onmouseenter="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 8px 25px rgba(0,0,0,0.15)'" 
+           onmouseleave="this.style.transform=''; this.style.boxShadow=''">
         <div class="opportunity-card__header">
           <div>
-            <div class="opportunity-card__ticker">🏆 ${opp.ticker}</div>
+            <div class="opportunity-card__ticker">${opp.ticker}</div>
             <div class="opportunity-card__name">${opp.empresa}</div>
             <div class="opportunity-card__meta">${opp.sector || ''} ${archBadge}</div>
           </div>
-          <div style="text-align: right;">
-            <div class="opportunity-card__price">${formatCurrency(opp.current_price)}</div>
-            <div class="opportunity-card__intrinsic" style="font-size: 0.75rem; color: var(--text-tertiary);">
-              Intrínseco: ${formatCurrency(opp.intrinsic_value)}
+          <div style="text-align: center;">
+            <div style="width: 52px; height: 52px; border-radius: 50%; border: 3px solid ${gradeColor}; display: flex; align-items: center; justify-content: center; margin-left: auto;">
+              <span style="font-size: 1.3rem; font-weight: 800; color: ${gradeColor};">${opp.grade || '?'}</span>
             </div>
+            <div style="font-size: 0.68rem; font-family: var(--font-mono); color: var(--text-tertiary); margin-top: 2px;">${opp.score || 0}/${opp.max_score || 105}</div>
           </div>
+        </div>
+
+        <!-- Score Breakdown Bars -->
+        <div style="margin: var(--space-sm) 0; padding: var(--space-xs) var(--space-sm); background: var(--bg-elevated); border-radius: var(--radius-sm); display: flex; flex-direction: column; gap: 3px;">
+          ${renderScoreBreakdown(opp.score_breakdown)}
         </div>
         
         <div class="opportunity-card__metrics">
@@ -1425,16 +1447,19 @@ function renderExplorerResults() {
             <span class="opportunity-card__metric-value">${opp.per_actual ? formatNumber(opp.per_actual, 1) + 'x' : '—'}</span>
           </div>
           <div class="opportunity-card__metric">
-            <span class="opportunity-card__metric-label">FCF Yield</span>
-            <span class="opportunity-card__metric-value">${formatPercent(opp.fcf_yield)}</span>
+            <span class="opportunity-card__metric-label">Precio</span>
+            <span class="opportunity-card__metric-value">${formatCurrency(opp.current_price)}</span>
           </div>
         </div>
 
         ${opp.thesis ? `<div class="opportunity-card__thesis">${opp.thesis}</div>` : ''}
 
-        <button class="btn-add-portfolio" onclick="addTickerFromExplorer('${opp.ticker}')">
-          + Añadir a Cartera
-        </button>
+        <div style="display: flex; gap: var(--space-xs); align-items: center;">
+          <button class="btn-add-portfolio" onclick="event.stopPropagation(); addTickerFromExplorer('${opp.ticker}')" style="flex: 1;">
+            + Añadir a Cartera
+          </button>
+          <span style="font-size: 0.68rem; color: var(--text-muted);">Click para ver detalle →</span>
+        </div>
       </div>
     `;
   }

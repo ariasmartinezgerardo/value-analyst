@@ -1415,20 +1415,40 @@ def run_full_analysis(data: dict) -> dict:
     growth = data.get('growth_estimate')
     growth_source = 'default'  # Track where the estimate comes from
 
-    # B1 FIX: Yahoo earningsGrowth can return extreme values (e.g. 7.56 = 756%).
-    # Any value > 100% is likely a cyclical recovery spike, not sustainable growth.
+    # B1 FIX (v2): Yahoo earningsGrowth can return extreme values (e.g. 3.25 = 325%).
+    # This typically happens when a company transitions from losses to profits (PLTR, CRWD).
+    # The 1-year spike is real but not a sustainable long-term DCF input.
+    # Instead of discarding entirely (which caused fallback to 5% default),
+    # we now use Revenue CAGR as a more reliable growth proxy — it's observable,
+    # multi-year, and not distorted by the base-effect of near-zero earnings.
+    extreme_analyst_signal = False
     if growth and growth > 1.0:
-        logger.info(f"{ticker}: growth_estimate {growth:.2%} is extreme (>100%), discarding")
-        growth = None
+        extreme_analyst_signal = True
+        logger.info(f"{ticker}: growth_estimate {growth:.2%} is extreme (>100%). "
+                    f"Flagging as explosive growth signal, will prefer Revenue CAGR.")
+        growth = None  # Don't use the raw number, but remember the signal
 
     if growth and growth > 0:
         base_growth_rate = growth
         growth_source = 'analyst'
     else:
-        # Estimate from EPS history (B6 FIX: _growth_rate now returns None instead of 0.05)
-        if eps_growth is not None:
+        # Cascading fallback: Analyst → (Revenue CAGR if extreme signal) → EPS CAGR → Revenue CAGR → Default
+        if extreme_analyst_signal and rev_growth and rev_growth > 0:
+            # Extreme analyst estimate confirmed there IS explosive growth.
+            # Use Revenue CAGR as the most reliable multi-year proxy.
+            base_growth_rate = rev_growth
+            growth_source = 'rev_cagr (extreme analyst fallback)'
+            logger.info(f"{ticker}: Using Revenue CAGR {rev_growth:.1%} as growth rate "
+                        f"(analyst estimate was extreme, EPS CAGR unavailable or distorted).")
+        elif eps_growth is not None:
             base_growth_rate = eps_growth
             growth_source = 'eps_cagr'
+        elif rev_growth is not None and rev_growth > 0:
+            # NEW fallback: Revenue CAGR when EPS CAGR is unavailable
+            # (e.g. negative historical EPS prevents CAGR calculation)
+            base_growth_rate = rev_growth
+            growth_source = 'rev_cagr'
+            logger.info(f"{ticker}: EPS CAGR unavailable, using Revenue CAGR {rev_growth:.1%} as fallback.")
         else:
             base_growth_rate = 0.05
             growth_source = 'default'
@@ -2013,6 +2033,75 @@ def run_full_analysis(data: dict) -> dict:
         rd_ratio = rd_latest / latest_rev
         rd_adjusted_operating_margin = current_operating_margin + rd_ratio
 
+    # ─── Data Quality Warnings (Transparency Layer) ────────────
+    # Detect and flag situations where the analysis had to improvise,
+    # use fallbacks, or where input data quality is questionable.
+    # These warnings help the user understand HOW RELIABLE the analysis is.
+    data_quality_warnings = []
+
+    # 1. Growth rate source quality
+    if growth_source == 'default':
+        data_quality_warnings.append(
+            '📊 Crecimiento estimado al 5% por defecto — sin datos de analistas ni historial suficiente. '
+            'La valoración puede ser poco fiable.')
+    elif growth_source == 'rev_cagr (extreme analyst fallback)':
+        data_quality_warnings.append(
+            f'📊 Analistas estiman crecimiento extremo ({data.get("growth_estimate", 0):.0%}), '
+            f'probablemente un pico cíclico. Se usa el CAGR de ingresos ({rev_growth:.1%}) como proxy más fiable.')
+    elif growth_source == 'rev_cagr':
+        data_quality_warnings.append(
+            '📊 No hay historial de EPS positivo suficiente para calcular CAGR. '
+            f'Se usa el crecimiento de ingresos ({rev_growth:.1%}) como alternativa.')
+    elif growth_source == 'normalized':
+        data_quality_warnings.append(
+            '📊 FCF cíclico detectado (múltiples años negativos). Se normalizó el FCF '
+            'y se usa crecimiento conservador del 3%.')
+    elif growth_source == 'eps_cagr':
+        data_quality_warnings.append(
+            '📊 Crecimiento basado en CAGR histórico de EPS (sin estimación de analistas disponible).')
+
+    # 2. Growth rate was capped by archetype
+    if growth_rate != base_growth_rate and growth_rate == growth_cap:
+        data_quality_warnings.append(
+            f'⚙️ Tasa de crecimiento capeada del {base_growth_rate:.0%} al {growth_cap:.0%} '
+            f'(límite del arquetipo {archetype_label}).')
+
+    # 3. Implied growth vs estimated growth mismatch
+    if implied_growth is not None and growth_rate and growth_rate > 0:
+        ratio = implied_growth / growth_rate
+        if ratio > 2.5:
+            data_quality_warnings.append(
+                f'⚠️ El mercado implica un crecimiento del {implied_growth:.1%}, '
+                f'pero el modelo usa {growth_rate:.1%}. '
+                f'La acción puede estar cara o el modelo es demasiado conservador.')
+        elif ratio < 0.3 and implied_growth > 0:
+            data_quality_warnings.append(
+                f'💎 El mercado solo implica {implied_growth:.1%} de crecimiento, '
+                f'pero el historial muestra {growth_rate:.1%}. Posible oportunidad.')
+
+    # 4. High terminal value dependence
+    if terminal_pct and terminal_pct > 75:
+        data_quality_warnings.append(
+            f'⚠️ El {terminal_pct:.0f}% del DCF depende del valor terminal. '
+            'La valoración es muy sensible a las hipótesis a largo plazo.')
+
+    # 5. Missing key data
+    if not eps_values or len(eps_values) < 2:
+        data_quality_warnings.append(
+            '📉 Historial de EPS insuficiente (<2 años). Limita la fiabilidad del análisis.')
+    if not revenue_values or len(revenue_values) < 2:
+        data_quality_warnings.append(
+            '📉 Historial de ingresos insuficiente (<2 años). Limita el cálculo de crecimiento.')
+    if not fcf_result.get('fcf_real_values') or len(fcf_result.get('fcf_real_values', [])) < 2:
+        data_quality_warnings.append(
+            '📉 Historial de FCF insuficiente. El DCF puede estar basado en un solo año (poco fiable).')
+
+    # 6. Extreme PER (could signal data anomaly or bubble)
+    if per_actual and per_actual > 100:
+        data_quality_warnings.append(
+            f'⚠️ PER de {per_actual:.0f}x es extremadamente alto. '
+            'Puede indicar beneficios deprimidos o valoración especulativa.')
+
     # ─── Build result ────────────────────────────────────────
     analysis = {
         'ticker': ticker,
@@ -2164,6 +2253,9 @@ def run_full_analysis(data: dict) -> dict:
 
         # CAPEX Informative
         'excess_capex_warning': excess_capex_warning,
+
+        # Data Quality Warnings (transparency layer)
+        'data_quality_warnings': data_quality_warnings,
     }
 
     return analysis

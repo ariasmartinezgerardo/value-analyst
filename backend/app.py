@@ -420,35 +420,34 @@ def update_all(current_user):
 @token_required
 def explore(current_user):
     """
-    Scan for undervalued opportunities.
-    Query params: max_per, min_roic, min_fcf_yield, min_mos,
-                  archetype, sector, sort_by
+    Scan for value opportunities using composite scoring.
+    Query params: market, archetype, sector, min_score, sort_by
     """
-    criteria = {
-        'max_per': float(request.args.get('max_per', 20)),
-        'min_roic': float(request.args.get('min_roic', 12)),
-        'min_fcf_yield': float(request.args.get('min_fcf_yield', 5)),
-        'min_mos': float(request.args.get('min_mos', 20)),
-    }
     market = request.args.get('market', 'sp500')
     archetype_filter = request.args.get('archetype', None)
     sector_filter = request.args.get('sector', None)
-    sort_by = request.args.get('sort_by', 'mos')
+    min_score = int(request.args.get('min_score', 0))
+    sort_by = request.args.get('sort_by', 'score')
 
     logger.info(f"User {current_user['username']} starting opportunity scan in {market} "
-                f"with criteria: {criteria}, archetype={archetype_filter}, "
-                f"sector={sector_filter}, sort={sort_by}")
-    opportunities = scan_opportunities(
-        criteria=criteria, market=market,
+                f"(min_score={min_score}, archetype={archetype_filter}, "
+                f"sector={sector_filter}, sort={sort_by})")
+    result = scan_opportunities(
+        market=market,
         archetype_filter=archetype_filter,
         sector_filter=sector_filter,
+        min_score=min_score,
         sort_by=sort_by,
     )
-    logger.info(f"Scan complete: {len(opportunities)} opportunities found")
+    opportunities = result.get('opportunities', [])
+    total_scanned = result.get('total_scanned', 0)
+    total_passed = result.get('total_passed', 0)
+    logger.info(f"Scan complete: {total_passed} scored out of {total_scanned} scanned")
 
     return jsonify({
-        'criteria': criteria,
         'count': len(opportunities),
+        'total_scanned': total_scanned,
+        'total_passed': total_passed,
         'opportunities': opportunities
     })
 
@@ -469,7 +468,7 @@ def get_history(current_user):
 
 @app.route('/api/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'ok', 'app': 'Value Analyst', 'version': '1.1.0', 'multiuser': True})
+    return jsonify({'status': 'ok', 'app': 'Value Analyst', 'version': '1.3.0', 'multiuser': True})
 
 
 # ─── Run Server ──────────────────────────────────────────────────

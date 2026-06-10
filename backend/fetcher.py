@@ -26,6 +26,35 @@ _FETCH_CACHE = {}
 _QUICK_CACHE = {}
 CACHE_TTL = 3600  # 1 hour
 
+# Risk-free rate cache (avoid 30+ ^TNX calls during a single scan)
+_RISK_FREE_CACHE = {'rate': None, 'timestamp': 0}
+_RISK_FREE_TTL = 600  # 10 minutes
+
+
+def _get_cached_risk_free_rate() -> float:
+    """Fetch and cache the US 10-Year Treasury yield."""
+    now = time.time()
+    if (_RISK_FREE_CACHE['rate'] is not None and
+            now - _RISK_FREE_CACHE['timestamp'] < _RISK_FREE_TTL):
+        return _RISK_FREE_CACHE['rate']
+
+    rate = 0.04  # Safe fallback: 4.0%
+    try:
+        tnx = yf.Ticker('^TNX')
+        tnx_info = tnx.info or {}
+        tnx_price = tnx_info.get('regularMarketPrice') or tnx_info.get('previousClose')
+        if tnx_price and 0.5 < tnx_price < 15.0:
+            rate = tnx_price / 100.0
+            logger.info(f"Live risk-free rate (^TNX): {tnx_price:.2f}% → {rate:.4f} (cached for 10 min)")
+        else:
+            logger.warning(f"^TNX value {tnx_price} out of sane range, using fallback 4.0%")
+    except Exception as e:
+        logger.warning(f"Failed to fetch ^TNX: {e}. Using 4.0% fallback.")
+
+    _RISK_FREE_CACHE['rate'] = rate
+    _RISK_FREE_CACHE['timestamp'] = now
+    return rate
+
 
 def _safe_get(df, key, col_idx=0, default=None):
     """Safely extract a value from a DataFrame by row label and column index."""
@@ -398,12 +427,33 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         per_forward = info.get('forwardPE')
 
         # ─── Dividend Info ───────────────────────────────────────
-        dividend_yield = info.get('dividendYield', 0)
+        # Yahoo's dividendYield field is frequently corrupted (e.g. returns
+        # 0.90 for MSFT which should be ~0.007). We compute yield ourselves
+        # from dividendRate / price, using Yahoo's value only as fallback.
+        dividend_rate = info.get('dividendRate', 0) or 0   # Annual $ per share
+        current_price_div = info.get('currentPrice') or info.get('regularMarketPrice') or 0
+        yahoo_yield = info.get('dividendYield', 0) or 0
+
+        if dividend_rate > 0 and current_price_div > 0:
+            # Self-computed yield is the most reliable source
+            dividend_yield = dividend_rate / current_price_div
+        elif yahoo_yield > 0:
+            # Fallback to Yahoo, but normalize if clearly a percentage
+            if yahoo_yield > 1:
+                dividend_yield = yahoo_yield / 100
+            else:
+                dividend_yield = yahoo_yield
+        else:
+            dividend_yield = 0
+
+        # Final sanity cap: no real company has >20% yield consistently
+        if dividend_yield > 0.20:
+            logger.warning(f"{ticker_str}: Computed div yield {dividend_yield:.2%} still too high "
+                           f"(rate={dividend_rate}, price={current_price_div}). Zeroing out.")
+            dividend_yield = 0
+
         payout_ratio = info.get('payoutRatio', 0)
-        # Yahoo sometimes returns yield/payout as percentage (3.7) vs ratio (0.037)
-        # Normalize: values > 1 are clearly percentages, convert to ratio
-        if dividend_yield and dividend_yield > 1:
-            dividend_yield = dividend_yield / 100
+        # Yahoo sometimes returns payout as percentage (37) vs ratio (0.37)
         if payout_ratio and payout_ratio > 5:
             payout_ratio = payout_ratio / 100
 
@@ -485,20 +535,9 @@ def fetch_company_data(ticker_symbol: str) -> dict:
         total_assets_values = _apply_fx(total_assets_values)
 
         # ─── US 10-Year Treasury Yield (Risk-Free Rate) ───────────
-        # Used by get_wacc() for live CAPM calculation
-        risk_free_rate = 0.04  # Safe fallback: 4.0%
-        try:
-            tnx = yf.Ticker('^TNX')
-            tnx_info = tnx.info or {}
-            tnx_price = tnx_info.get('regularMarketPrice') or tnx_info.get('previousClose')
-            if tnx_price and 0.5 < tnx_price < 15.0:
-                # ^TNX quotes in percentage points (e.g. 4.35 means 4.35%)
-                risk_free_rate = tnx_price / 100.0
-                logger.info(f"Live risk-free rate (^TNX): {tnx_price:.2f}% → {risk_free_rate:.4f}")
-            else:
-                logger.warning(f"^TNX value {tnx_price} out of sane range, using fallback 4.0%")
-        except Exception as e:
-            logger.warning(f"Failed to fetch ^TNX risk-free rate: {e}. Using 4.0% fallback.")
+        # Used by get_wacc() for live CAPM calculation.
+        # Cached at module level to avoid 30+ redundant API calls during scans.
+        risk_free_rate = _get_cached_risk_free_rate()
 
         # ─── Quarterly Earnings History (last 4 quarters) ────────
         quarterly_data = []

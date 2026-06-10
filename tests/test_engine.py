@@ -618,5 +618,217 @@ class TestNonGAAPDetection(unittest.TestCase):
         self.assertEqual(result['non_gaap_flag'], '🚫 No Elegible')
 
 
+class TestGrowthCascade(unittest.TestCase):
+    """Test the improved growth rate estimation cascade (B1 v2 fix)."""
+
+    def _make_test_data(self, **overrides):
+        """Create a minimal valid data dict for testing."""
+        base = {
+            'ticker': 'TEST',
+            'empresa': 'Test Corp',
+            'sector': 'Technology',
+            'industry': 'Software—Application',
+            'currency': 'USD',
+            'financial_currency': 'USD',
+            'current_price': 100.0,
+            'market_cap': 50e9,
+            'shares_outstanding': 500e6,
+            'enterprise_value': 55e9,
+            'fiscal_dates': ['2024-12-31', '2023-12-31', '2022-12-31', '2021-12-31'],
+            'historical_prices': [90, 80, 70, 60],
+            'eps_values': [5.0, 4.5, 4.0, 3.5],
+            'eps_ttm': 5.5,
+            'ebitda_values': [10e9, 9e9, 8e9, 7e9],
+            'ebitda_ttm': 11e9,
+            'capex_values': [2e9, 1.8e9, 1.5e9, 1.2e9],
+            'interest_values': [500e6, 400e6, 300e6, 200e6],
+            'tax_values': [2e9, 1.8e9, 1.5e9, 1.2e9],
+            'wc_values': [100e6, -50e6, 200e6, 100e6],
+            'da_values': [1e9, 900e6, 800e6, 700e6],
+            'ebit_values': [8e9, 7e9, 6e9, 5e9],
+            'pretax_values': [7.5e9, 6.5e9, 5.5e9, 4.5e9],
+            'equity_values': [30e9, 28e9, 25e9, 22e9],
+            'total_debt_values': [10e9, 9e9, 8e9, 7e9],
+            'cash_values': [5e9, 4e9, 3e9, 2e9],
+            'fcf_yahoo_values': [6e9, 5e9, 4e9, 3e9],
+            'revenue_values': [40e9, 30e9, 22e9, 16e9],
+            'net_income_values': [5e9, 4e9, 3e9, 2e9],
+            'gross_profit_values': [20e9, 15e9, 12e9, 8e9],
+            'per_trailing': 18.2,
+            'per_forward': 15.5,
+            'growth_estimate': 0.12,
+            'analyst_target': 120.0,
+            'dividend_yield': 0.0,
+            'payout_ratio': 0.0,
+            'book_value': 60.0,
+            'roe': 0.17,
+            'dividend_rate': 0.0,
+            'held_percent_insiders': 0.05,
+            'audit_risk': 3,
+            'board_risk': 2,
+            'compensation_risk': 4,
+            'business_summary': 'A test company.',
+            'shares_history': [500e6, 510e6, 520e6, 530e6],
+            'sbc_values': [500e6, 400e6, 300e6, 200e6],
+            'fetched_at': '2024-01-01 00:00:00',
+            'error': None,
+        }
+        base.update(overrides)
+        return base
+
+    def test_extreme_analyst_uses_rev_cagr(self):
+        """PLTR-like: analyst=325%, EPS history has negatives → should use Revenue CAGR, NOT 5% default."""
+        data = self._make_test_data(
+            growth_estimate=3.25,  # 325% — extreme
+            eps_values=[2.0, 0.5, -0.5, -1.5],  # Mixed, CAGR undefined (negative start)
+            eps_ttm=2.0,
+            revenue_values=[4.5e9, 2.9e9, 2.2e9, 1.9e9],  # ~33% CAGR
+        )
+        result = run_full_analysis(data)
+        # Growth rate should be based on Revenue CAGR (~33%), NOT the 5% default.
+        # After archetype cap (compounder=20%, hypergrowth=30%), it should be > 5%.
+        self.assertGreater(result['growth_rate'], 0.10,
+                           f"Growth rate {result['growth_rate']:.2%} fell to default. "
+                           f"Source: {result['growth_source']}")
+        self.assertNotEqual(result['growth_source'], 'default')
+
+    def test_rev_cagr_fallback_when_eps_all_negative(self):
+        """Pre-profit company: all EPS negative but revenue growing → should use Revenue CAGR."""
+        data = self._make_test_data(
+            growth_estimate=None,  # No analyst estimate
+            eps_values=[-2.0, -3.0, -4.0, -5.0],  # All negative → CAGR = None
+            eps_ttm=-1.0,
+            revenue_values=[2e9, 1.5e9, 1.0e9, 0.5e9],  # Explosive revenue growth
+        )
+        result = run_full_analysis(data)
+        # Should NOT fall to 5% default because Revenue CAGR is available
+        self.assertIn('rev_cagr', result['growth_source'])
+
+    def test_normal_analyst_estimate_unaffected(self):
+        """Normal analyst estimate (e.g. 12%) should still be used directly."""
+        data = self._make_test_data(
+            growth_estimate=0.12,
+            # Revenue CAGR ~10%, aligned with analyst 12% → no blending triggered
+            revenue_values=[40e9, 36e9, 33e9, 30e9],
+        )
+        result = run_full_analysis(data)
+        self.assertEqual(result['growth_source'], 'analyst')
+
+    def test_data_quality_warnings_present(self):
+        """Verify data_quality_warnings is always present in output."""
+        data = self._make_test_data()
+        result = run_full_analysis(data)
+        self.assertIn('data_quality_warnings', result)
+        self.assertIsInstance(result['data_quality_warnings'], list)
+
+    def test_data_quality_warning_for_default_growth(self):
+        """When growth falls to default, a warning should be generated."""
+        data = self._make_test_data(
+            growth_estimate=None,
+            eps_values=[None],  # No EPS CAGR possible
+            revenue_values=[100e6],  # No Revenue CAGR possible (only 1 year)
+        )
+        result = run_full_analysis(data)
+        warnings_text = ' '.join(result.get('data_quality_warnings', []))
+        self.assertIn('defecto', warnings_text.lower(),
+                       "Should warn about default growth rate")
+
+    def test_data_quality_warning_for_extreme_analyst(self):
+        """When extreme analyst estimate is discarded, a warning should explain."""
+        data = self._make_test_data(
+            growth_estimate=3.25,
+            revenue_values=[4.5e9, 2.9e9, 2.2e9, 1.9e9],
+        )
+        result = run_full_analysis(data)
+        warnings_text = ' '.join(result.get('data_quality_warnings', []))
+        self.assertTrue(
+            'extremo' in warnings_text.lower() or 'cagr' in warnings_text.lower(),
+            f"Should warn about extreme analyst. Warnings: {result.get('data_quality_warnings', [])}")
+
+
+# ─── Import score_opportunity for scanner tests ──────────────────
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
+from scanner import score_opportunity
+
+
+class TestScoreOpportunity(unittest.TestCase):
+    """Tests for the composite scoring system."""
+
+    def test_perfect_score(self):
+        """A company with all excellent metrics should score near max."""
+        analysis = {
+            'estado_semaforo': '🟢 STRONG BUY',
+            'calidad': '⭐ Alta (8/9)',
+            'margen_seguridad': 35,
+            'roic_current': 25,
+            'fcf_trend': '↑',
+            'non_gaap_flag': '✅ GAAP OK',
+            'data_quality_warnings': [],
+        }
+        result = score_opportunity(analysis)
+        self.assertEqual(result['score'], 105)
+        self.assertEqual(result['grade'], 'A')
+
+    def test_terrible_score(self):
+        """A company with all bad metrics should score very low."""
+        analysis = {
+            'estado_semaforo': '🔴 SOBREVALORADA',
+            'calidad': '❌ Baja (2/9)',
+            'margen_seguridad': -20,
+            'roic_current': 2,
+            'fcf_trend': '↓',
+            'non_gaap_flag': '',
+            'data_quality_warnings': ['w1', 'w2', 'w3', 'w4'],
+        }
+        result = score_opportunity(analysis)
+        self.assertLessEqual(result['score'], 10)
+        self.assertEqual(result['grade'], 'F')
+
+    def test_visa_compounder_scores_high(self):
+        """Visa-like: high PER but excellent ROIC/quality. Should NOT be penalized."""
+        analysis = {
+            'estado_semaforo': '🟡 MANTENER',  # PER high so not green
+            'calidad': '⭐ Alta (8/9)',
+            'margen_seguridad': 5,  # Small positive MoS
+            'roic_current': 30,  # Outstanding ROIC
+            'fcf_trend': '↑',
+            'non_gaap_flag': '✅ GAAP OK',
+            'data_quality_warnings': [],
+        }
+        result = score_opportunity(analysis)
+        # Old system: Visa gets REJECTED (PER > 20). New system: high score.
+        self.assertGreaterEqual(result['score'], 65)
+        self.assertIn(result['grade'], ('A', 'B'))
+
+    def test_grade_boundaries(self):
+        """Verify grade letter boundaries."""
+        self.assertEqual(score_opportunity({
+            'estado_semaforo': '🟢', 'calidad': '⭐', 'margen_seguridad': 35,
+            'roic_current': 25, 'fcf_trend': '↑',
+            'non_gaap_flag': '✅', 'data_quality_warnings': [],
+        })['grade'], 'A')  # 105 pts
+
+        self.assertEqual(score_opportunity({
+            'estado_semaforo': '🟢', 'calidad': '✅', 'margen_seguridad': 16,
+            'roic_current': 11, 'fcf_trend': '→',
+            'non_gaap_flag': '⚠', 'data_quality_warnings': ['w1'],
+        })['grade'], 'B')  # 30+12+15+8+5+2+2 = 74
+
+    def test_empty_analysis_doesnt_crash(self):
+        """Scoring should handle a completely empty dict gracefully."""
+        result = score_opportunity({})
+        # Empty dict: MoS defaults to 0 (>=0 → 8 pts) + no warnings (→ 5 pts) = 13
+        self.assertEqual(result['score'], 13)
+        self.assertEqual(result['grade'], 'F')
+        self.assertEqual(result['max_score'], 105)
+
+    def test_breakdown_keys(self):
+        """Breakdown should always contain all 7 category keys."""
+        result = score_opportunity({'margen_seguridad': 10})
+        expected_keys = {'semaforo', 'calidad', 'mos', 'roic', 'fcf_trend', 'transparencia', 'fiabilidad'}
+        self.assertEqual(set(result['breakdown'].keys()), expected_keys)
+
+
 if __name__ == '__main__':
     unittest.main()
